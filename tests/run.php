@@ -78,6 +78,7 @@ unset($pdo);
 
 require "$build/config.php";   // loads config.local.php + lib.php -> gb_db()
 check((int)gb_db()->query('SELECT COUNT(*) FROM gb_spots')->fetchColumn() === 8, '8 preset spots seeded');
+check((int)gb_db()->query('SELECT COUNT(*) FROM gb_spots WHERE price = 10 AND period_days = 30')->fetchColumn() === 8, 'every preset placement costs 10.00 for 30 days');
 
 function start_server(string $build, int $port, array $env): array {
     $mail = "$build/mail.log";
@@ -198,7 +199,7 @@ check($s === 400, 'pay-stripe.php without CSRF -> 400');
 check($s === 502 && str_contains($b, 'Stripe error'), 'pay-stripe.php with placeholder key fails cleanly (502)', "status $s");
 
 [$s] = http('POST', '/ipn-paypal.php', ['body' => http_build_query(['custom' => $bid, 'payment_status' => 'Completed',
-    'mc_gross' => '19.00', 'mc_currency' => 'USD', 'receiver_email' => 'seller@example.test', 'txn_id' => 'FAKE'])]);
+    'mc_gross' => '10.00', 'mc_currency' => 'USD', 'receiver_email' => 'seller@example.test', 'txn_id' => 'FAKE'])]);
 check($s === 400 && (int)banner($bid)['paid'] === 0, 'forged PayPal IPN (not VERIFIED by PayPal) is rejected');
 
 $stripe = function (array $event, ?int $t = null, ?string $secret = null): int {
@@ -210,15 +211,15 @@ $stripe = function (array $event, ?int $t = null, ?string $secret = null): int {
     return $s;
 };
 // Simulate the pending order pay-stripe.php records when checkout starts.
-gb_db()->prepare("INSERT INTO gb_orders (banner_id,gateway,amount,currency,status,txn_ref) VALUES (?,'stripe',19,'USD','pending','cs_test_1')")->execute([$bid]);
+gb_db()->prepare("INSERT INTO gb_orders (banner_id,gateway,amount,currency,status,txn_ref) VALUES (?,'stripe',10,'USD','pending','cs_test_1')")->execute([$bid]);
 $evt = fn(int $amount) => ['type' => 'checkout.session.completed', 'data' => ['object' => [
     'id' => 'cs_test_1', 'payment_status' => 'paid', 'amount_total' => $amount, 'metadata' => ['banner_id' => (string)$bid]]]];
 
-check($stripe($evt(1900), null, 'whsec_wrong') === 400, 'Stripe webhook with wrong secret -> 400');
-check($stripe($evt(1900), time() - 3600) === 400, 'Stripe webhook replayed 1h later -> 400');
+check($stripe($evt(1000), null, 'whsec_wrong') === 400, 'Stripe webhook with wrong secret -> 400');
+check($stripe($evt(1000), time() - 3600) === 400, 'Stripe webhook replayed 1h later -> 400');
 check($stripe($evt(100)) === 200 && (int)banner($bid)['paid'] === 0, 'Stripe underpayment does not mark paid');
-check($stripe($evt(1900)) === 200 && (int)banner($bid)['paid'] === 1, 'valid Stripe webhook marks banner paid');
-check($stripe($evt(1900)) === 200, 'duplicate webhook delivery accepted (200)');
+check($stripe($evt(1000)) === 200 && (int)banner($bid)['paid'] === 1, 'valid Stripe webhook marks banner paid');
+check($stripe($evt(1000)) === 200, 'duplicate webhook delivery accepted (200)');
 $orders = gb_db()->query("SELECT status, COUNT(*) c FROM gb_orders WHERE banner_id=$bid GROUP BY status")->fetchAll(PDO::FETCH_KEY_PAIR);
 check(($orders['paid'] ?? 0) == 1 && !isset($orders['pending']), 'exactly one paid order, pending order converted (no duplicates)', json_encode($orders));
 $mail = (string)@file_get_contents("$build/mail.log");
@@ -236,7 +237,7 @@ check(str_contains($b, 'Admin login'), 'wrong password rejected');
 [$s, $h] = http('POST', '/admin.php', ['as' => 'admin', 'body' => ['password' => GB_ADMIN_PASSWORD]]);
 check($s === 302, 'correct password logs in');
 [$s, , $dash] = http('GET', '/admin.php', ['as' => 'admin']);
-check(str_contains($dash, '>19.00 USD<'), 'dashboard shows revenue 19.00 USD');
+check(str_contains($dash, '>10.00 USD<'), 'dashboard shows revenue 10.00 USD');
 [, , $bl] = http('GET', '/admin.php?a=banners', ['as' => 'admin']);
 $tok = csrf_from($bl);
 $act = fn(string $a, int $id, array $extra = []) => http('POST', '/admin.php', ['as' => 'admin',
@@ -291,7 +292,7 @@ check(banner($ub)['status'] === 'pending', 'resume cannot activate a banner that
 $act('mark_paid', $ub);
 check((int)banner($ub)['paid'] === 1, 'Mark paid marks the banner paid');
 $o = gb_db()->query("SELECT gateway, amount, status FROM gb_orders WHERE banner_id=$ub")->fetch();
-check($o && $o['gateway'] === 'manual' && (float)$o['amount'] === 29.0 && $o['status'] === 'paid', 'Mark paid records a manual order at the spot price', json_encode($o));
+check($o && $o['gateway'] === 'manual' && (float)$o['amount'] === 10.0 && $o['status'] === 'paid', 'Mark paid records a manual order at the spot price', json_encode($o));
 $act('approve', $ub);
 check(banner($ub)['status'] === 'active', 'approve after Mark paid makes it active');
 [, , $b] = http('GET', '/serve.php?spot=leaderboard');

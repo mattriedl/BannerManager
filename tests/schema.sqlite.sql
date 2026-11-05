@@ -9,7 +9,7 @@ CREATE TABLE gb_spots (
   name TEXT NOT NULL,
   width INTEGER NOT NULL DEFAULT 300,
   height INTEGER NOT NULL DEFAULT 250,
-  price NUMERIC NOT NULL DEFAULT 0,
+  price NUMERIC NOT NULL DEFAULT 10.00,
   period_days INTEGER NOT NULL DEFAULT 30,
   is_active INTEGER NOT NULL DEFAULT 1
 );
@@ -57,11 +57,11 @@ CREATE TABLE gb_stats (
 );
 
 INSERT INTO gb_spots (slug,name,width,height,price,period_days) VALUES
-('medium-rectangle','Medium Rectangle',300,250,19.00,30),
-('leaderboard','Leaderboard',728,90,29.00,30),
-('full-banner','Full Banner',468,60,15.00,30),
-('mobile-banner','Mobile Banner',320,50,12.00,30),
-('skyscraper','Skyscraper',160,600,24.00,30),
-('half-page','Half Page',300,600,34.00,30),
-('large-rectangle','Large Rectangle',336,280,22.00,30),
-('square','Square',250,250,16.00,30);
+('medium-rectangle','Medium Rectangle',300,250,10.00,30),
+('leaderboard','Leaderboard',728,90,10.00,30),
+('full-banner','Full Banner',468,60,10.00,30),
+('mobile-banner','Mobile Banner',320,50,10.00,30),
+('skyscraper','Skyscraper',160,600,10.00,30),
+('half-page','Half Page',300,600,10.00,30),
+('large-rectangle','Large Rectangle',336,280,10.00,30),
+('square','Square',250,250,10.00,30);

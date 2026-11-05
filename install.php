@@ -44,7 +44,7 @@ CREATE TABLE gb_spots (
   name VARCHAR(120) NOT NULL,
   width SMALLINT UNSIGNED NOT NULL DEFAULT 300,
   height SMALLINT UNSIGNED NOT NULL DEFAULT 250,
-  price DECIMAL(10,2) NOT NULL DEFAULT 0,
+  price DECIMAL(10,2) NOT NULL DEFAULT 10.00,
   period_days SMALLINT UNSIGNED NOT NULL DEFAULT 30,
   is_active TINYINT(1) NOT NULL DEFAULT 1
 ) ENGINE=InnoDB;
@@ -94,14 +94,14 @@ CREATE TABLE gb_stats (
 
 -- 8 preset sizes seeded as sellable spots (add custom sizes in admin):
 INSERT INTO gb_spots (slug,name,width,height,price,period_days) VALUES
-('medium-rectangle','Medium Rectangle',300,250,19.00,30),
-('leaderboard','Leaderboard',728,90,29.00,30),
-('full-banner','Full Banner',468,60,15.00,30),
-('mobile-banner','Mobile Banner',320,50,12.00,30),
-('skyscraper','Skyscraper',160,600,24.00,30),
-('half-page','Half Page',300,600,34.00,30),
-('large-rectangle','Large Rectangle',336,280,22.00,30),
-('square','Square',250,250,16.00,30);
+('medium-rectangle','Medium Rectangle',300,250,10.00,30),
+('leaderboard','Leaderboard',728,90,10.00,30),
+('full-banner','Full Banner',468,60,10.00,30),
+('mobile-banner','Mobile Banner',320,50,10.00,30),
+('skyscraper','Skyscraper',160,600,10.00,30),
+('half-page','Half Page',300,600,10.00,30),
+('large-rectangle','Large Rectangle',336,280,10.00,30),
+('square','Square',250,250,10.00,30);
 SCHEMA_FILE;
 
 $files['config.php'] = <<<'CONFIG_FILE'
@@ -1562,7 +1562,7 @@ if ($a === 'spots') {
            . '<label class="field"><span>Embed name</span><input type="text" name="slug" required pattern="[a-z0-9-]+" placeholder="billboard"><span class="help-text">Lowercase letters, numbers and dashes.</span></label></div>'
            . '<div class="row"><label class="field"><span>Width (px)</span><input type="number" name="width" value="970" min="1"></label>'
            . '<label class="field"><span>Height (px)</span><input type="number" name="height" value="250" min="1"></label></div>'
-           . '<div class="row"><label class="field"><span>Price (' . e(GB_CURRENCY) . ')</span><input type="number" name="price" value="49" min="0" step="0.01"></label>'
+           . '<div class="row"><label class="field"><span>Price (' . e(GB_CURRENCY) . ')</span><input type="number" name="price" value="10" min="0" step="0.01"></label>'
            . '<label class="field"><span>Run length (days)</span><input type="number" name="period_days" value="30" min="1"></label></div>'
            . '<button class="btn btn-primary" type="submit">Add placement</button></form></section>'
            . '<section class="panel"><div class="panel-head"><div><h2>Embed code</h2>'
