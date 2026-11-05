@@ -26,7 +26,9 @@ No install needed:
 
 To walk through the whole flow:
 
-1. Open `/sample-banners/` and download an image, e.g. `leaderboard-728x90.png`.
+1. Open `/sample-banners/index.html` (the link is printed when `./dev.sh`
+   starts) and download an image, e.g. `leaderboard-728x90.png`. The files
+   are also in `build/dev/sample-banners/` in the file list.
 2. On `/advertise.php`, pick **Leaderboard**, fill in the form and upload it.
    You land on the preview page; note the banner number (`id=` in the URL).
 3. Real Stripe/PayPal aren't set up here, so fake the payment in the terminal

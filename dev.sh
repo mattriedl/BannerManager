@@ -51,7 +51,6 @@ cat <<EOF
   Admin panel     : $BASE_URL/admin.php   (password: local-test-admin-pass)
   Embed demo      : $BASE_URL/demo.html
   E-mails         : $DIR/mail.log
-  Test images     : $DIR/sample-banners/  (one PNG per slot size)
 
 EOF
 
@@ -63,9 +62,10 @@ cat > "$DIR/demo.html" <<EOF
 EOF
 
 # Ready-made banner images in every preset size, for trying the purchase form.
-if php -r 'exit(function_exists("imagecreatetruecolor") ? 0 : 1);'; then
-  php tests/make-sample-banners.php "$DIR/sample-banners" >/dev/null
-fi
+php tests/make-sample-banners.php "$DIR/sample-banners" >/dev/null \
+  && echo "  Sample banners  : $BASE_URL/sample-banners/index.html" \
+  || echo "  (could not create sample banners)"
+echo
 
 exec php -d display_errors=1 -d error_reporting=-1 \
   -d "sendmail_path=tee -a $PWD/$DIR/mail.log >/dev/null" \
