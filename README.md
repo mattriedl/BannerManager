@@ -31,9 +31,10 @@ To walk through the whole flow:
    are also in `build/dev/sample-banners/` in the file list.
 2. On `/advertise.php`, pick **Leaderboard**, fill in the form and upload it.
    You land on the preview page; note the banner number (`id=` in the URL).
-3. Real Stripe/PayPal aren't set up here, so fake the payment in the terminal
-   (open a second terminal with **+**): `php tests/fake-payment.php 1`.
-   It sends a properly signed Stripe webhook, so the real payment code runs.
+3. Real Stripe/PayPal aren't set up here, so mark it paid: either click
+   **Mark paid** in `/admin.php` → **Banners**, or run
+   `php tests/fake-payment.php 1` in a second terminal (**+**), which sends
+   a properly signed Stripe webhook so the real payment code runs.
 4. In `/admin.php` (password `local-test-admin-pass`) → **Banners** → **Approve**.
 5. Open `/demo.html` to see it served through the embed snippet. Click it,
    then check **Stats** in the admin panel.
@@ -121,3 +122,4 @@ keys) and follow the installer's printed next steps (Stripe webhook for
 | Advertise form | Promised "image size must match the slot" but didn't check; accepted any URL starting with `http` | Exact size check before storing; URL validated |
 | Admin | Worked with the shipped `CHANGE-ME-NOW` password; no session regeneration on login; a failed admin upload was an uncaught 500 | Refuses placeholder/short passwords; `session_regenerate_id`; errors shown as a flash message |
 | Preview | Always said "awaiting approval" once paid, even when live | Shows the real status |
+| Admin banner list | Approve on an unpaid banner did nothing but said "approved"; Resume could set an unpaid banner to *active* even though it would never be served | Approve explains why it refused; Resume only works on paused banners; each banner shows *serving* / *not serving (reason)*; new **Mark paid** button for offline payments |

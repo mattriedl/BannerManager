@@ -74,7 +74,7 @@ CREATE TABLE gb_banners (
 CREATE TABLE gb_orders (
   id INT AUTO_INCREMENT PRIMARY KEY,
   banner_id INT NOT NULL,
-  gateway ENUM('paypal','stripe') NOT NULL,
+  gateway ENUM('paypal','stripe','manual') NOT NULL,
   amount DECIMAL(10,2) NOT NULL,
   currency CHAR(3) NOT NULL DEFAULT 'USD',
   status ENUM('pending','paid','failed','refunded') NOT NULL DEFAULT 'pending',
@@ -322,15 +322,19 @@ function gb_mark_paid(int $banner_id, string $gateway, string $ref, float $amoun
     if (GB_AUTO_APPROVE) gb_approve($banner_id);
 }
 
-function gb_approve(int $banner_id): void {
+/** @return string '' on success, otherwise why the banner was not approved. */
+function gb_approve(int $banner_id): string {
     $db = gb_db();
     $b  = gb_get_banner($banner_id);
-    if (!$b || (int)$b['paid'] !== 1 || $b['status'] === 'active') return;
+    if (!$b)                      return 'banner not found';
+    if ((int)$b['paid'] !== 1)    return 'it is unpaid — use "Mark paid" first if payment was received another way';
+    if ($b['status'] === 'active') return 'it is already active';
     $db->prepare("UPDATE gb_banners SET status='active', starts_at=NOW(),
                   ends_at=DATE_ADD(NOW(), INTERVAL ? DAY) WHERE id=?")
        ->execute([(int)$b['spot_period'], $banner_id]);
     gb_mail((string)$b['advertiser_email'], 'Your banner is now live',
         "Your banner in '{$b['spot_name']}' is online for {$b['spot_period']} days.");
+    return '';
 }
 
 /* ---------------- image uploads ----------------
@@ -845,10 +849,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $act  = (string)($_POST['act'] ?? '');
   try {
 
-    if ($act === 'approve')  { gb_approve($bid); gb_flash('Banner #' . $bid . ' approved.'); }
+    if ($act === 'approve') {
+        $why = gb_approve($bid);
+        gb_flash($why === '' ? "Banner #$bid approved and live." : "Banner #$bid NOT approved: $why.");
+    }
+    if ($act === 'mark_paid') {   // offline payment (cash, check, invoice) or testing
+        $b = gb_get_banner($bid);
+        if ($b && (int)$b['paid'] !== 1) {
+            gb_mark_paid($bid, 'manual', 'admin ' . gmdate('Y-m-d H:i'), (float)$b['spot_price']);
+            gb_flash("Banner #$bid marked paid (" . gb_money((float)$b['spot_price']) . ")."
+                   . (GB_AUTO_APPROVE ? '' : ' Now click Approve to publish it.'));
+        } else {
+            gb_flash("Banner #$bid is already paid.");
+        }
+    }
     if ($act === 'reject')   { $db->prepare("UPDATE gb_banners SET status='rejected' WHERE id=?")->execute([$bid]); gb_flash('Banner rejected.'); }
     if ($act === 'pause')    { $db->prepare("UPDATE gb_banners SET status='paused' WHERE id=?")->execute([$bid]); gb_flash('Banner paused.'); }
-    if ($act === 'resume')   { $db->prepare("UPDATE gb_banners SET status='active' WHERE id=?")->execute([$bid]); gb_flash('Banner resumed.'); }
+    if ($act === 'resume') {   // only a paused banner can be resumed
+        $st = $db->prepare("UPDATE gb_banners SET status='active' WHERE id=? AND status='paused'");
+        $st->execute([$bid]);
+        gb_flash($st->rowCount() ? "Banner #$bid resumed." : "Banner #$bid is not paused, nothing to resume.");
+    }
     if ($act === 'delete') {
         $b = gb_get_banner($bid);
         if ($b && $b['kind'] === 'image' && $b['image_path'])
@@ -966,13 +987,24 @@ if ($a === 'banners') {
           . '<input type="hidden" name="back" value="banners">'
           . '<input type="hidden" name="id" value="' . (int)$r['id'] . '">'
           . '<button>' . $label . '</button></form>';
+        $paid = (int)$r['paid'] === 1;
+        $live = $r['status'] === 'active' && $paid;
+        $serving = $live
+            ? '<b style="color:#2fa855">● serving</b>'
+            : '<b style="color:#b00020">○ not serving</b> <small>(' . (!$paid ? 'unpaid' : e($r['status'])) . ')</small>';
+        $buttons = (!$paid ? $act('mark_paid', 'Mark paid') : '')
+                 . ($paid && $r['status'] !== 'active' && $r['status'] !== 'paused' ? $act('approve', 'Approve') : '')
+                 . ($r['status'] === 'active' ? $act('pause', 'Pause') : '')
+                 . ($r['status'] === 'paused' ? $act('resume', 'Resume') : '')
+                 . ($r['status'] !== 'rejected' ? $act('reject', 'Reject') : '')
+                 . $act('delete', 'Delete');
         $body .= '<tr><td>' . (int)$r['id'] . '</td><td>' . e($r['spot_name']) . '</td>'
               . '<td>' . e($r['kind']) . '</td><td>' . e($r['advertiser_name'] ?: '(admin)') . '</td>'
-              . '<td>' . e($r['status']) . ($r['paid'] ? ' 💰' : '') . '<br><small>' . $win . '</small></td>'
+              . '<td>' . $serving . '<br>' . e($r['status']) . ($paid ? ' · paid 💰' : ' · <b>unpaid</b>')
+              . '<br><small>' . $win . '</small></td>'
               . '<td>' . number_format((float)$r['impressions']) . '</td>'
               . '<td>' . number_format((float)$r['clicks']) . '</td><td>' . $ctr . '</td><td>'
-              . $act('approve', 'Approve') . $act('pause', 'Pause') . $act('resume', 'Resume')
-              . $act('reject', 'Reject') . $act('delete', 'Delete') . '</td></tr>';
+              . $buttons . '</td></tr>';
     }
     $body .= '</table>';
     gb_layout('Banners', 'banners', $body);

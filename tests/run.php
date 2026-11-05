@@ -278,6 +278,28 @@ check(json_decode($b, true)['html'] === null && banner($bid)['status'] === 'expi
 check($s === 404, 'clicks on expired banner -> 404');
 
 /* ---------- 9. admin banners + spots ---------- */
+section('Unpaid banners (payment skipped)');
+gb_db()->prepare("INSERT INTO gb_banners (spot_id, advertiser_name, advertiser_email, kind, image_path, target_url, width, height, status, paid)
+                  VALUES (2, 'Skip Payer', 'skip@example.test', 'image', 'uploads/none.png', 'https://skip.example.test', 728, 90, 'pending', 0)")->execute();
+$ub = (int)gb_db()->lastInsertId();
+$act('approve', $ub);
+[, , $bl] = http('GET', '/admin.php?a=banners', ['as' => 'admin']);
+check(banner($ub)['status'] === 'pending' && str_contains($bl, "Banner #$ub NOT approved: it is unpaid"), 'approving an unpaid banner says why it was not approved');
+check(str_contains($bl, 'not serving</b> <small>(unpaid)'), 'banner list shows unpaid banner as "not serving (unpaid)"');
+$act('resume', $ub);
+check(banner($ub)['status'] === 'pending', 'resume cannot activate a banner that was never paused');
+$act('mark_paid', $ub);
+check((int)banner($ub)['paid'] === 1, 'Mark paid marks the banner paid');
+$o = gb_db()->query("SELECT gateway, amount, status FROM gb_orders WHERE banner_id=$ub")->fetch();
+check($o && $o['gateway'] === 'manual' && (float)$o['amount'] === 29.0 && $o['status'] === 'paid', 'Mark paid records a manual order at the spot price', json_encode($o));
+$act('approve', $ub);
+check(banner($ub)['status'] === 'active', 'approve after Mark paid makes it active');
+[, , $b] = http('GET', '/serve.php?spot=leaderboard');
+check(str_contains((string)json_decode($b, true)['html'], "go.php?id=$ub") || str_contains((string)json_decode($b, true)['html'], 'house ad'), 'banner is now in the leaderboard rotation');
+[, , $bl] = http('GET', '/admin.php?a=banners', ['as' => 'admin']);
+check(str_contains($bl, '● serving'), 'banner list shows it as serving');
+$act('delete', $ub);
+
 section('Admin banners + spots');
 $act('banner_create', 0, ['spot_id' => 2, 'kind' => 'html', 'html' => '<b>house ad</b>', 'url' => '', 'width' => 728, 'height' => 90]);
 [, , $b] = http('GET', '/serve.php?spot=leaderboard');

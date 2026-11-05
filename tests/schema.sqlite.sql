@@ -39,7 +39,7 @@ CREATE INDEX idx_serve ON gb_banners (spot_id, status, ends_at);
 CREATE TABLE gb_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   banner_id INTEGER NOT NULL REFERENCES gb_banners(id) ON DELETE CASCADE,
-  gateway TEXT NOT NULL CHECK (gateway IN ('paypal','stripe')),
+  gateway TEXT NOT NULL CHECK (gateway IN ('paypal','stripe','manual')),
   amount NUMERIC NOT NULL,
   currency TEXT NOT NULL DEFAULT 'USD',
   status TEXT NOT NULL DEFAULT 'pending'
