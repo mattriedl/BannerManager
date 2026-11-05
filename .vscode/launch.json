@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Listen for Xdebug (use with XDEBUG=1 ./dev.sh)",
+      "type": "php",
+      "request": "launch",
+      "port": 9003
+    },
+    {
+      "name": "Debug installer (install.php → build/debug)",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/install.php",
+      "args": ["--dir=${workspaceFolder}/build/debug", "--force"],
+      "cwd": "${workspaceFolder}",
+      "port": 0,
+      "runtimeArgs": ["-dxdebug.start_with_request=yes"]
+    },
+    {
+      "name": "Debug test suite (tests/run.php)",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/tests/run.php",
+      "cwd": "${workspaceFolder}",
+      "port": 0,
+      "runtimeArgs": ["-dxdebug.start_with_request=yes"]
+    }
+  ]
+}

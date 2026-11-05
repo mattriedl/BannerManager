@@ -1,0 +1,51 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sqlite:
+    name: PHP ${{ matrix.php }} · SQLite
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.2', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_sqlite, pdo_mysql, gd, curl, mbstring
+          coverage: none
+      - run: php -l install.php
+      - run: php tests/run.php
+
+  mysql:
+    name: PHP 8.3 · MySQL 8 (real installer --db import)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      GB_TEST_DB: mysql
+      GB_TEST_MYSQL_HOST: 127.0.0.1
+      GB_TEST_MYSQL_USER: root
+      GB_TEST_MYSQL_PASS: root
+      GB_TEST_MYSQL_DB: greenbox_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, gd, curl, mbstring
+          coverage: none
+      - run: php tests/run.php
