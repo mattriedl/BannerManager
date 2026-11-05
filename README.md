@@ -97,6 +97,13 @@ GB_TEST_DB=mysql GB_TEST_MYSQL_USER=root GB_TEST_MYSQL_PASS=secret php tests/run
   `config.php` in dev/test builds and replaces it. Never upload
   `config.local.php` to a live server.
 
+## Branding
+
+Set your company name with `GB_BRAND_NAME` in `config.php` (default:
+"Kestrel Media", a placeholder). All pages share one stylesheet,
+`style.css`; the colours are defined at the top as CSS variables
+(`--ink` navy, `--brand` emerald) if you want to match your own brand.
+
 ## Deploy
 
 ```bash

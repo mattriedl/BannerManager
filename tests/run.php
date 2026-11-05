@@ -147,7 +147,7 @@ check($j['html'] === null && $j['width'] === 300 && $j['height'] === 250, 'serve
 /* ---------- 4. advertiser purchase form ---------- */
 section('Advertiser purchase flow');
 [$s, , $form] = http('GET', '/advertise.php', ['as' => 'adv']);
-check($s === 200 && substr_count($form, '<option value=') === 8, 'advertise.php lists 8 spots');
+check($s === 200 && substr_count($form, 'name="spot" value=') === 8, 'advertise.php lists 8 placements');
 $csrf = csrf_from($form);
 check($csrf !== '', 'advertise.php has CSRF token');
 
@@ -236,7 +236,7 @@ check(str_contains($b, 'Admin login'), 'wrong password rejected');
 [$s, $h] = http('POST', '/admin.php', ['as' => 'admin', 'body' => ['password' => GB_ADMIN_PASSWORD]]);
 check($s === 302, 'correct password logs in');
 [$s, , $dash] = http('GET', '/admin.php', ['as' => 'admin']);
-check(str_contains($dash, 'Total collected revenue: <b>19.00 USD</b>'), 'dashboard shows revenue 19.00 USD');
+check(str_contains($dash, '>19.00 USD<'), 'dashboard shows revenue 19.00 USD');
 [, , $bl] = http('GET', '/admin.php?a=banners', ['as' => 'admin']);
 $tok = csrf_from($bl);
 $act = fn(string $a, int $id, array $extra = []) => http('POST', '/admin.php', ['as' => 'admin',
@@ -285,7 +285,7 @@ $ub = (int)gb_db()->lastInsertId();
 $act('approve', $ub);
 [, , $bl] = http('GET', '/admin.php?a=banners', ['as' => 'admin']);
 check(banner($ub)['status'] === 'pending' && str_contains($bl, "Banner #$ub NOT approved: it is unpaid"), 'approving an unpaid banner says why it was not approved');
-check(str_contains($bl, 'not serving</b> <small>(unpaid)'), 'banner list shows unpaid banner as "not serving (unpaid)"');
+check(str_contains($bl, 'pill-off">Not serving</span> <span class="reason">Unpaid'), 'banner list shows unpaid banner as "Not serving: Unpaid"');
 $act('resume', $ub);
 check(banner($ub)['status'] === 'pending', 'resume cannot activate a banner that was never paused');
 $act('mark_paid', $ub);
@@ -297,7 +297,7 @@ check(banner($ub)['status'] === 'active', 'approve after Mark paid makes it acti
 [, , $b] = http('GET', '/serve.php?spot=leaderboard');
 check(str_contains((string)json_decode($b, true)['html'], "go.php?id=$ub") || str_contains((string)json_decode($b, true)['html'], 'house ad'), 'banner is now in the leaderboard rotation');
 [, , $bl] = http('GET', '/admin.php?a=banners', ['as' => 'admin']);
-check(str_contains($bl, '● serving'), 'banner list shows it as serving');
+check(str_contains($bl, 'pill-live">Serving'), 'banner list shows it as serving');
 $act('delete', $ub);
 
 section('Admin banners + spots');
@@ -318,6 +318,17 @@ check(banner($bid) === [] && count(glob("$build/uploads/*.png")) === 0, 'delete 
 check(str_contains($b, 'Admin login'), 'logout works');
 
 /* ---------- 10. placeholder password guard ---------- */
+section('Design');
+[$s, $h, $b] = http('GET', '/style.css');
+check($s === 200 && str_contains($h['content-type'] ?? '', 'text/css'), 'style.css is served');
+gb_db()->exec("INSERT INTO gb_banners (spot_id, advertiser_name, advertiser_email, kind, image_path, target_url, width, height) VALUES (1,'D','d@example.test','image','uploads/x.png','https://d.example.test',300,250)");
+$did = (int)gb_db()->lastInsertId();
+foreach (['/advertise.php' => 'adv', "/preview.php?id=$did&sig=" . gb_sig($did) => 'adv', '/admin.php' => 'admin2',
+          '/admin.php?a=dashboard' => 'admin', '/admin.php?a=spots' => 'admin', '/admin.php?a=stats' => 'admin'] as $page => $who) {
+    [, , $b] = http('GET', $page, ['as' => $who]);
+    check(str_contains($b, 'href="style.css?v=') && str_contains($b, GB_BRAND_NAME), "$page uses the shared design and brand name");
+}
+
 section('Safety guard');
 [$srv2, $up2] = start_server($build, $port + 1, array_merge($envVars, ['GB_TEST_ADMIN_PASS' => 'CHANGE-ME-NOW']));
 [$s, , $b] = http('GET', 'http://127.0.0.1:' . ($port + 1) . '/admin.php');
