@@ -14,7 +14,35 @@ PHP 8.1+ with `pdo_mysql`, `curl`, `mbstring` (and `gd` to run the tests).
 MySQL 5.7+/MariaDB 10.3+ in production. Local runs and tests use SQLite, so
 no database server is needed for development.
 
-## Run it locally
+## Try it in your browser (GitHub Codespaces)
+
+No install needed:
+
+1. On the repo page click **Code → Codespaces → Create codespace on main**.
+2. Wait for setup to finish (about a minute the first time), then in the
+   terminal at the bottom run `./dev.sh`.
+3. A browser tab opens on port 8000 (or open it from the **Ports** tab).
+   Go to `/advertise.php`. The terminal prints all the links.
+
+To walk through the whole flow:
+
+1. Open `/sample-banners/` and download an image, e.g. `leaderboard-728x90.png`.
+2. On `/advertise.php`, pick **Leaderboard**, fill in the form and upload it.
+   You land on the preview page; note the banner number (`id=` in the URL).
+3. Real Stripe/PayPal aren't set up here, so fake the payment in the terminal
+   (open a second terminal with **+**): `php tests/fake-payment.php 1`.
+   It sends a properly signed Stripe webhook, so the real payment code runs.
+4. In `/admin.php` (password `local-test-admin-pass`) → **Banners** → **Approve**.
+5. Open `/demo.html` to see it served through the embed snippet. Click it,
+   then check **Stats** in the admin panel.
+
+Sent e-mails are in `build/dev/mail.log`. Stop the codespace when you're
+done (it stops itself after 30 idle minutes); personal accounts get free
+monthly hours.
+
+## Run it on your own computer
+
+Needs PHP 8.1+ with `pdo_sqlite` (on Windows, run it inside WSL).
 
 ```bash
 ./dev.sh
@@ -28,12 +56,9 @@ Use `RESET=1 ./dev.sh` to start from an empty database.
 `dev.sh` regenerates `build/dev` from `install.php` each start, so edit
 `install.php` and restart.
 
-To mark a test order as paid locally without Stripe/PayPal, approve it from
-the admin panel after running:
-
-```bash
-sqlite3 build/dev/dev.sqlite "UPDATE gb_banners SET paid=1 WHERE id=1"
-```
+To mark a test order as paid without Stripe/PayPal, run
+`php tests/fake-payment.php <banner id>` while `dev.sh` is running, then
+approve it in the admin panel.
 
 ## Test
 
