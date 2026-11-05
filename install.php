@@ -772,6 +772,13 @@ table.data tfoot td { font-weight: 600; color: var(--ink); background: #FAFBFC; 
 .thumb img { max-width: 100%; max-height: 100%; }
 .with-thumb { display: flex; align-items: center; gap: 12px; }
 .actions { display: flex; flex-wrap: nowrap; gap: 6px; }
+tr.editing td { background: #FAFDFB; box-shadow: inset 3px 0 0 var(--brand); padding: 20px 16px; }
+.edit-row { margin: 0; }
+.edit-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.edit-fields { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(120px, 1fr) minmax(120px, 1fr) auto; gap: 0 14px; align-items: end; }
+.edit-buttons { display: flex; gap: 8px; margin-bottom: 18px; }
+.edit-row .help-text { margin: 0; max-width: 90ch; }
+@media (max-width: 920px) { .edit-fields { grid-template-columns: 1fr 1fr; } .edit-buttons { grid-column: 1 / -1; } }
 .row-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .row-actions form { margin: 0; }
 .row-actions .more { display: flex; gap: 2px; }
@@ -848,7 +855,7 @@ gb_session();
    ================================================================ */
 
 $errors = [];
-$spots = gb_db()->query("SELECT * FROM gb_spots WHERE is_active=1 ORDER BY price")->fetchAll();
+$spots = gb_db()->query("SELECT * FROM gb_spots WHERE is_active=1 ORDER BY price, id")->fetchAll();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
@@ -1317,23 +1324,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->prepare("DELETE FROM gb_banners WHERE id=?")->execute([$bid]);
         gb_flash('Banner deleted.');
     }
-    if ($act === 'spot_save') { // create or update spot (8 presets + custom sizes)
-        $sid   = (int)($_POST['spot_id'] ?? 0);
-        $vals  = [(string)$_POST['slug'], (string)$_POST['name'],
-                  (int)$_POST['width'], (int)$_POST['height'],
-                  (float)$_POST['price'], (int)$_POST['period_days']];
-        if ($sid) {
-            $db->prepare("UPDATE gb_spots SET slug=?,name=?,width=?,height=?,price=?,period_days=? WHERE id=?")
-               ->execute(array_merge($vals, [$sid]));
-        } else {
-            $db->prepare("INSERT INTO gb_spots (slug,name,width,height,price,period_days) VALUES (?,?,?,?,?,?)")
-               ->execute($vals);
+    // Shared checks for a placement's name, price and run length.
+    $spotTerms = function (): array {
+        $name   = trim(is_string($_POST['name'] ?? null) ? $_POST['name'] : '');
+        $price  = is_numeric($_POST['price'] ?? null) ? round((float)$_POST['price'], 2) : -1;
+        $period = filter_var($_POST['period_days'] ?? null, FILTER_VALIDATE_INT);
+        if ($name === '' || mb_strlen($name) > 120) throw new RuntimeException('Enter a name of up to 120 characters.');
+        if ($price < 0 || $price > 99999999)       throw new RuntimeException('Enter a price of 0 or more.');
+        if ($period === false || $period < 1 || $period > 3650)
+            throw new RuntimeException('Enter a run length between 1 and 3650 days.');
+        return [$name, $price, (int)$period];
+    };
+
+    if ($act === 'spot_save') { // add a new placement (custom size)
+        [$name, $price, $period] = $spotTerms();
+        $slug = strtolower(trim(is_string($_POST['slug'] ?? null) ? $_POST['slug'] : ''));
+        $w = (int)($_POST['width'] ?? 0); $h = (int)($_POST['height'] ?? 0);
+        if (!preg_match('/^[a-z0-9-]{1,60}$/', $slug))
+            throw new RuntimeException('Embed name can only use lowercase letters, numbers and dashes.');
+        if ($w < 1 || $h < 1 || $w > 5000 || $h > 5000) throw new RuntimeException('Enter a width and height between 1 and 5000 px.');
+        $dup = $db->prepare("SELECT COUNT(*) FROM gb_spots WHERE slug=?"); $dup->execute([$slug]);
+        if ((int)$dup->fetchColumn() > 0) throw new RuntimeException("A placement with the embed name \"$slug\" already exists.");
+        $db->prepare("INSERT INTO gb_spots (slug,name,width,height,price,period_days) VALUES (?,?,?,?,?,?)")
+           ->execute([$slug, $name, $w, $h, $price, $period]);
+        gb_flash("Placement \"$name\" added.");
+    }
+    if ($act === 'spot_update') { // edit name, price and run length of an existing placement
+        $sid  = (int)($_POST['id'] ?? 0);
+        $spot = $db->prepare("SELECT * FROM gb_spots WHERE id=?"); $spot->execute([$sid]);
+        $old  = $spot->fetch();
+        if (!$old) throw new RuntimeException('That placement no longer exists.');
+        try {
+            [$name, $price, $period] = $spotTerms();
+        } catch (RuntimeException $ex) {
+            gb_flash('Error: ' . $ex->getMessage());
+            gb_redirect('admin.php?a=spots&edit=' . $sid);
         }
-        gb_flash('Spot saved.');
+        $db->prepare("UPDATE gb_spots SET name=?, price=?, period_days=? WHERE id=?")
+           ->execute([$name, $price, $period, $sid]);
+        gb_flash("Placement \"$name\" updated: " . gb_money($price) . " for $period days. "
+               . "New and unpaid orders use these terms.");
     }
     if ($act === 'spot_delete') {
         $db->prepare("DELETE FROM gb_spots WHERE id=?")->execute([(int)$_POST['id']]);
-        gb_flash('Spot deleted.');
+        gb_flash('Placement deleted.');
     }
     if ($act === 'banner_create') { // admin banners: images OR custom HTML
         $kind = ($_POST['kind'] ?? '') === 'html' ? 'html' : 'image';
@@ -1542,17 +1576,38 @@ if ($a === 'banners') {
 /* ---- placements (spots) ---- */
 if ($a === 'spots') {
     $rows = $db->query("SELECT s.*, (SELECT COUNT(*) FROM gb_banners b WHERE b.spot_id=s.id AND b.status='active' AND b.paid=1) live
-                        FROM gb_spots s ORDER BY s.price")->fetchAll();
+                        FROM gb_spots s ORDER BY s.id")->fetchAll();
     $body = '<div class="table-wrap"><table class="data"><thead><tr><th>Placement</th><th>Embed name</th><th class="n">Price</th>'
           . '<th class="n">Run</th><th class="n">Serving</th><th></th></tr></thead><tbody>';
+    $editId = (int)($_GET['edit'] ?? 0);
     foreach ($rows as $r) {
-        $body .= '<tr><td><div class="with-thumb"><span class="thumb" style="background:var(--field)">' . gb_shape((int)$r['width'], (int)$r['height'], 60, 36) . '</span>'
-               . '<div><div class="cell-main">' . e($r['name']) . '</div><div class="cell-sub">' . (int)$r['width'] . ' × ' . (int)$r['height'] . ' px</div></div></div></td>'
+        $id = (int)$r['id'];
+        $placement = '<div class="with-thumb"><span class="thumb" style="background:var(--field)">' . gb_shape((int)$r['width'], (int)$r['height'], 60, 36) . '</span>'
+                   . '<div><div class="cell-main">' . e($r['name']) . '</div><div class="cell-sub">' . (int)$r['width'] . ' × ' . (int)$r['height'] . ' px</div></div></div>';
+        if ($id === $editId) {   // inline edit form in place of the row
+            $body .= '<tr class="editing" id="edit"><td colspan="6"><form method="post" class="edit-row">' . gb_csrf_field()
+                   . '<input type="hidden" name="act" value="spot_update"><input type="hidden" name="back" value="spots">'
+                   . '<input type="hidden" name="id" value="' . $id . '">'
+                   . '<div class="edit-head">' . $placement . '<span class="cell-sub">Embed name <code>' . e($r['slug']) . '</code></span></div>'
+                   . '<div class="edit-fields">'
+                   . '<label class="field"><span>Name</span><input type="text" name="name" maxlength="120" required value="' . e($r['name']) . '"></label>'
+                   . '<label class="field"><span>Price (' . e(GB_CURRENCY) . ')</span><input type="number" name="price" min="0" step="0.01" required value="' . e(number_format((float)$r['price'], 2, '.', '')) . '" autofocus></label>'
+                   . '<label class="field"><span>Run length (days)</span><input type="number" name="period_days" min="1" max="3650" required value="' . (int)$r['period_days'] . '"></label>'
+                   . '<div class="edit-buttons"><button class="btn btn-primary" type="submit">Save changes</button>'
+                   . '<a class="btn btn-secondary" href="?a=spots">Cancel</a></div></div>'
+                   . '<p class="help-text">New and unpaid orders use the new price. Orders already paid keep the price they paid; '
+                   . 'a new run length also applies to paid orders you haven\'t approved yet. '
+                   . 'Size and embed name can\'t be changed because existing banners and website code depend on them.</p>'
+                   . '</form></td></tr>';
+            continue;
+        }
+        $body .= '<tr><td>' . $placement . '</td>'
                . '<td><code>' . e($r['slug']) . '</code></td>'
                . '<td class="n">' . e(gb_money((float)$r['price'])) . '</td><td class="n">' . (int)$r['period_days'] . ' days</td>'
                . '<td class="n">' . (int)$r['live'] . '</td>'
-               . '<td>' . gb_action('spot_delete', (int)$r['id'], 'Delete', 'spots', 'btn-danger',
-                     'Delete the ' . $r['name'] . ' placement? Its banners and their statistics are deleted too.') . '</td></tr>';
+               . '<td><div class="actions"><a class="btn btn-sm btn-secondary" href="?a=spots&amp;edit=' . $id . '#edit">Edit</a>'
+               . gb_action('spot_delete', $id, 'Delete', 'spots', 'btn-danger',
+                     'Delete the ' . $r['name'] . ' placement? Its banners and their statistics are deleted too.') . '</div></td></tr>';
     }
     $body .= '</tbody></table></div>'
            . '<div class="two-col" style="margin-top:20px"><section class="panel"><div class="panel-head"><div><h2>Add a placement</h2>'

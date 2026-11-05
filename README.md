@@ -97,6 +97,14 @@ GB_TEST_DB=mysql GB_TEST_MYSQL_USER=root GB_TEST_MYSQL_PASS=secret php tests/run
   `config.php` in dev/test builds and replaces it. Never upload
   `config.local.php` to a live server.
 
+## Changing prices
+
+In the admin console go to **Placements**, click **Edit** on a placement,
+change its name, price or run length and click **Save changes**. New and
+unpaid orders use the new terms; orders already paid keep the price they
+paid. A placement's size and embed name are fixed once created, because
+existing banners and website code depend on them.
+
 ## Branding
 
 Set your company name with `GB_BRAND_NAME` in `config.php` (default:

@@ -314,6 +314,49 @@ $act('spot_save', 0, ['slug' => 'billboard', 'name' => 'Billboard', 'width' => 9
 check(json_decode($b, true)['width'] === 970, 'custom spot size added');
 $act('delete', $bid);
 check(banner($bid) === [] && count(glob("$build/uploads/*.png")) === 0, 'delete removes banner + its image file');
+
+section('Edit placements');
+$spot = fn(string $slug) => gb_db()->query("SELECT * FROM gb_spots WHERE slug='$slug'")->fetch();
+$sq = $spot('square');
+[, , $pl] = http('GET', '/admin.php?a=spots', ['as' => 'admin']);
+check(str_contains($pl, '?a=spots&amp;edit=' . $sq['id']), 'each placement has an Edit button');
+[$s, , $pl] = http('GET', '/admin.php?a=spots&edit=' . $sq['id'], ['as' => 'admin']);
+check($s === 200 && str_contains($pl, 'value="spot_update"') && str_contains($pl, 'value="10.00"') && str_contains($pl, 'Save changes'),
+      'Edit opens an inline form with the current price');
+$act('spot_update', (int)$sq['id'], ['name' => 'Square Plus', 'price' => '12.50', 'period_days' => '14']);
+$sq2 = $spot('square');
+check($sq2['name'] === 'Square Plus' && (float)$sq2['price'] === 12.5 && (int)$sq2['period_days'] === 14,
+      'Save changes updates name, price and run length', json_encode($sq2));
+check((int)$sq2['width'] === 250 && $sq2['slug'] === 'square', 'size and embed name are not changed by an edit');
+[, , $pl] = http('GET', '/admin.php?a=spots', ['as' => 'admin']);
+check(str_contains($pl, 'Placement &quot;Square Plus&quot; updated: 12.50 USD for 14 days'), 'confirmation message after saving');
+[, , $form] = http('GET', '/advertise.php', ['as' => 'adv']);
+check(str_contains($form, '<strong>12.50</strong>USD') && str_contains($form, 'for 14 days'), 'advertiser page shows the new price and run length');
+
+gb_db()->exec("INSERT INTO gb_banners (spot_id, advertiser_name, advertiser_email, kind, image_path, target_url, width, height) VALUES ({$sq['id']},'E','e@example.test','image','uploads/e.png','https://e.example.test',250,250)");
+$eb = (int)gb_db()->lastInsertId();
+$act('mark_paid', $eb);
+$amt = gb_db()->query("SELECT amount FROM gb_orders WHERE banner_id=$eb")->fetchColumn();
+check((float)$amt === 12.5, 'a new order is charged the edited price', (string)$amt);
+$act('approve', $eb);
+$e = banner($eb);
+check(abs((strtotime($e['ends_at']) - strtotime($e['starts_at'])) / 86400 - 14) < 0.01, 'a new order runs for the edited run length');
+
+foreach ([['price' => '-5', 'period_days' => '30', 'why' => 'negative price'],
+          ['price' => 'abc', 'period_days' => '30', 'why' => 'non-numeric price'],
+          ['price' => '10', 'period_days' => '0', 'why' => 'zero-day run']] as $bad) {
+    [$s, $h] = $act('spot_update', (int)$sq['id'], ['name' => 'Broken', 'price' => $bad['price'], 'period_days' => $bad['period_days']]);
+    check($s === 302 && str_contains($h['location'] ?? '', 'edit=' . $sq['id']) && $spot('square')['name'] === 'Square Plus',
+          "edit with a {$bad['why']} is refused and reopens the form");
+}
+[, , $pl] = http('GET', '/admin.php?a=spots&edit=' . $sq['id'], ['as' => 'admin']);
+check(str_contains($pl, 'Error: Enter a run length'), 'refused edit shows what to fix');
+$act('spot_save', 0, ['slug' => 'billboard', 'name' => 'Billboard 2', 'width' => 970, 'height' => 250, 'price' => 10, 'period_days' => 30]);
+[, , $pl] = http('GET', '/admin.php?a=spots', ['as' => 'admin']);
+check(str_contains($pl, 'embed name &quot;billboard&quot; already exists'), 'adding a duplicate embed name gives a clear error');
+$act('delete', $eb);
+$act('spot_update', (int)$sq['id'], ['name' => 'Square', 'price' => '10', 'period_days' => '30']);
+
 [$s, $h] = http('GET', '/admin.php?a=logout', ['as' => 'admin']);
 [, , $b] = http('GET', '/admin.php', ['as' => 'admin']);
 check(str_contains($b, 'Admin login'), 'logout works');
