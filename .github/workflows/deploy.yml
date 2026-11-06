@@ -131,16 +131,32 @@ jobs:
           fi
 
       - name: Upload files (nothing is uploaded on a dry run)
+        shell: bash   # bash -eo pipefail: a failed upload fails the step even through tee
         run: |
+          src="$GITHUB_WORKSPACE/build/site"
+          # Guard: only ever send the built site, never the repository itself.
+          if [ ! -f "$src/advertise.php" ] || [ -e "$src/.git" ] || [ -e "$src/install.php" ] || [ -e "$src/config.php" ]; then
+            echo "::error::The folder to upload is not the built site. Nothing was uploaded."; exit 1
+          fi
           dry=""; [ "$DRY_RUN" = "true" ] && dry="--dry-run"
+          # One lftp command per line (lftp treats each line as a separate command).
           # --reverse uploads local -> server. No --delete: nothing on the server is removed.
-          lftp -e "set sftp:auto-confirm yes; set net:max-retries 2; set net:timeout 30;
-                   open -p $SFTP_P -u $SFTP_U --env-password sftp://$SFTP_H;
-                   cd $SFTP_D;
-                   mirror --reverse --verbose $dry --no-perms
-                          --exclude-glob config.php --exclude-glob config.local.php --exclude-glob uploads/
-                          build/site/ ./;
-                   bye"
+          cat > "$RUNNER_TEMP/deploy.lftp" <<LFTP
+          set sftp:auto-confirm yes
+          set net:max-retries 2
+          set net:timeout 30
+          open -p $SFTP_P -u $SFTP_U --env-password sftp://$SFTP_H
+          cd $SFTP_D
+          lcd $src
+          mirror --reverse --verbose $dry --no-perms --exclude-glob config.php --exclude-glob config.local.php --exclude-glob uploads/ ./ ./
+          bye
+          LFTP
+          echo "lftp commands:"; sed -E 's/(-u )[^ ]+/\1***/; s#(sftp://)[^ ]+#\1***#' "$RUNNER_TEMP/deploy.lftp"
+          lftp -f "$RUNNER_TEMP/deploy.lftp" | tee "$RUNNER_TEMP/mirror.log"
+          # Second guard: the transfer list must only contain built-site files.
+          if grep -qE "\.git/|install\.php|README\.md|tests/|config\.php'" "$RUNNER_TEMP/mirror.log"; then
+            echo "::error::Unexpected files in the transfer list. Check the log."; exit 1
+          fi
           if [ "$DRY_RUN" = "true" ]; then
             echo "::notice::Dry run finished. Nothing was uploaded. Run again with 'Dry run' unticked to deploy."
           fi
@@ -148,13 +164,20 @@ jobs:
       - name: Check the live site
         if: env.DRY_RUN != 'true'
         run: |
-          for page in advertise.php admin.php embed.js.php style.css; do
+          bad=""
+          for page in advertise.php admin.php embed.js.php style.css favicon.svg; do
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/$page" || echo 000)
             echo "$SITE_URL/$page -> HTTP $code"
             [ "$code" = "200" ] || bad="$bad $page($code)"
           done
+          # Confirm it is the version just deployed, not an older copy.
+          curl -s --max-time 20 "$SITE_URL/advertise.php" | grep -q 'class="wordmark"' || bad="$bad advertise.php(old version or error)"
+          curl -s --max-time 20 "$SITE_URL/embed.js.php" | grep -q '&site=' || bad="$bad embed.js.php(old version)"
+          j=$(curl -s --max-time 20 "$SITE_URL/serve.php?spot=leaderboard&site=deploy-check.invalid")
+          echo "serve.php -> $j"
+          echo "$j" | grep -q '"width":728' || bad="$bad serve.php(database not reachable?)"
           if [ -n "$bad" ]; then
-            echo "::warning::Uploaded, but some pages did not load:$bad. Common causes: config.php database details, PHP version below 8.1, or the domain not pointing at this server yet."
-          else
-            echo "::notice::Deployed. $SITE_URL is live."
+            echo "::error::Uploaded, but these checks failed:$bad. Common causes: database details in config.php, setup.php not run yet, PHP below 8.1."
+            exit 1
           fi
+          echo "::notice::Deployed and verified. $SITE_URL is live."
