@@ -211,6 +211,18 @@ jobs:
             fi
             rm -f "$cfg"
           fi
+          echo "Live placements and prices (from the public order page):"
+          curl -s --max-time 20 "$SITE_URL/advertise.php" > "$RUNNER_TEMP/adv.html" || true
+          echo "advertise.php -> HTTP $(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/advertise.php")"
+          php -r '$h=(string)file_get_contents($argv[1]);
+            preg_match_all("~placement-name\">([^<]+)</span>\s*<span class=\"placement-size\">([^<]+)</span>\s*<span class=\"placement-price\"><strong>([^<]+)</strong>([A-Z]{3})\s*for (\d+) days~", $h, $m, PREG_SET_ORDER);
+            foreach ($m as $r) printf("  %-18s %-14s %s %s for %s days\n", html_entity_decode($r[1]), html_entity_decode($r[2]), $r[3], $r[4], $r[5]);
+            if (!$m) echo "  (no placements found on the page)\n";' "$RUNNER_TEMP/adv.html"
+          echo "Banners being served right now:"
+          for slot in medium-rectangle leaderboard full-banner mobile-banner skyscraper half-page large-rectangle square; do
+            r=$(curl -s --max-time 20 "$SITE_URL/serve.php?spot=$slot&site=deploy-check.invalid")
+            echo "$r" | grep -q '"html":null' && echo "  $slot: none" || echo "  $slot: $(echo "$r" | grep -o 'go.php?id=[0-9]*' | head -1 || echo "$r" | head -c 120)"
+          done
           echo "Setup page status:"
           curl -s --max-time 20 "$SITE_URL/setup.php" | sed -E 's/<[^>]+>/ /g; s/[[:space:]]+/ /g' | grep -oE "(Set a strong[^.]*\.|Run setup|Could not use the database[^.]*\.)" | head -3 || true
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/setup.php" || echo 000)
