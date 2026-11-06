@@ -181,3 +181,40 @@ jobs:
             exit 1
           fi
           echo "::notice::Deployed and verified. $SITE_URL is live."
+
+      - name: Diagnose problems
+        # Runs on dry runs and whenever an earlier step failed. Changes nothing on the server.
+        if: always() && (env.DRY_RUN == 'true' || failure()) && env.SFTP_H != ''
+        shell: bash
+        run: |
+          echo "Checking config.php on the server (values are never printed)..."
+          cfg="$RUNNER_TEMP/config.check.php"
+          printf 'set sftp:auto-confirm yes\nset net:max-retries 2\nopen -p %s -u %s --env-password sftp://%s\ncd %s\nget config.php -o %s\nbye\n' \
+            "$SFTP_P" "$SFTP_U" "$SFTP_H" "$SFTP_D" "$cfg" > "$RUNNER_TEMP/get.lftp"
+          if ! lftp -f "$RUNNER_TEMP/get.lftp" >/dev/null 2>&1 || [ ! -s "$cfg" ]; then
+            echo "::warning::Could not read config.php from the server."
+          else
+            todo=""
+            grep -q "'YOUR_DATABASE_NAME'"     "$cfg" && todo="$todo GB_DB_NAME"
+            grep -q "'YOUR_DATABASE_USER'"     "$cfg" && todo="$todo GB_DB_USER"
+            grep -q "'YOUR_DATABASE_PASSWORD'" "$cfg" && todo="$todo GB_DB_PASS"
+            grep -q "'CHANGE-ME-NOW'"          "$cfg" && todo="$todo GB_ADMIN_PASSWORD"
+            grep -q "'greenbox'"               "$cfg" && todo="$todo GB_DB_NAME(old default)"
+            grep -q "define('GB_DB_USER', 'root')" "$cfg" && todo="$todo GB_DB_USER(old default)"
+            grep -q "YOUR-PAYPAL-EMAIL"        "$cfg" && echo "::notice::GB_PAYPAL_BUSINESS is still the placeholder (only needed before taking PayPal payments)."
+            grep -q "GB_BRAND_NAME"            "$cfg" || echo "::notice::config.php is an older version without GB_BRAND_NAME; the site will still show BannerPromote."
+            php -l "$cfg" >/dev/null 2>&1 || echo "::error::config.php on the server has a PHP syntax error (often a missing quote or semicolon after editing)."
+            if [ -n "$todo" ]; then
+              echo "::error::config.php on the server still has placeholder values for:$todo. Fill these in and upload config.php again."
+            else
+              echo "config.php: all required settings are filled in."
+            fi
+            rm -f "$cfg"
+          fi
+          echo "Setup page status:"
+          curl -s --max-time 20 "$SITE_URL/setup.php" | sed -E 's/<[^>]+>/ /g; s/[[:space:]]+/ /g' | grep -oE "(Set a strong[^.]*\.|Run setup|Could not use the database[^.]*\.)" | head -3 || true
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/setup.php" || echo 000)
+          echo "setup.php -> HTTP $code"
+          [ "$code" = "404" ] && echo "setup.php is not on the server (fine if setup was already run)."
+          true
+
