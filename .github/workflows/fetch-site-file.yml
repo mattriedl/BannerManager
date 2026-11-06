@@ -1,0 +1,45 @@
+# Download a file from the live server (read-only) so it can be reviewed or
+# brought into the repository. Changes nothing on the server.
+# Actions > Fetch site file > Run workflow, then download the artifact.
+
+name: Fetch site file
+
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: "File in the site folder to download (e.g. index.html). config.php is never downloaded."
+        default: index.html
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install the SFTP client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp >/dev/null
+
+      - name: Download the file
+        env:
+          H: ${{ secrets.SFTP_HOST }}
+          U: ${{ secrets.SFTP_USER }}
+          LFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
+          PORT: ${{ secrets.SFTP_PORT }}
+          DIR: ${{ secrets.SFTP_DIR }}
+          FILE: ${{ inputs.path }}
+        shell: bash
+        run: |
+          clean() { printf '%s' "$1" | tr -d '\r\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'; }
+          h=$(clean "$H"); u=$(clean "$U"); export LFTP_PASSWORD=$(printf '%s' "$LFTP_PASSWORD" | tr -d '\r\n')
+          echo "::add-mask::$h"; echo "::add-mask::$u"
+          case "$FILE" in *config*|*..*|/*|*[!A-Za-z0-9._/-]*) echo "::error::That file can't be fetched."; exit 1;; esac
+          mkdir -p fetched
+          printf 'set sftp:auto-confirm yes\nopen -p %s -u %s --env-password sftp://%s\ncd %s\ncls -l\nget %s -o fetched/%s\nbye\n' \
+            "$(clean "${PORT:-22}")" "$u" "$h" "$(clean "${DIR:-.}")" "$FILE" "$(basename "$FILE")" > "$RUNNER_TEMP/get.lftp"
+          lftp -f "$RUNNER_TEMP/get.lftp"
+          ls -la fetched
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fetched-file
+          path: fetched/
+          retention-days: 1
