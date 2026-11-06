@@ -1,0 +1,151 @@
+# Deploys the BannerPromote site to the web host over SFTP.
+#
+# Connection details come from encrypted repository secrets
+# (Settings > Secrets and variables > Actions):
+#   SFTP_HOST      server address
+#   SFTP_USER      SFTP user name
+#   SFTP_PASSWORD  SFTP password
+#   SFTP_PORT      optional, default 22
+#   SFTP_DIR       optional, folder to deploy into; default "." = the folder
+#                  you land in when you log in (/public_html on this host)
+#
+# What it never does:
+#   - upload or overwrite config.php (your passwords live there)
+#   - touch the uploads/ folder (advertisers' banner images)
+#   - delete anything on the server
+#   - upload setup.php, unless you tick "Include setup.php"
+#
+# Runs when you start it (Actions > Deploy > Run workflow). To also deploy
+# automatically after every push that passes the tests, add a repository
+# variable AUTO_DEPLOY = true (Settings > Secrets and variables > Actions >
+# Variables).
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: connect and list what would be uploaded, change nothing"
+        type: boolean
+        default: true
+      include_setup:
+        description: "Include setup.php (only needed for first-time database setup)"
+        type: boolean
+        default: false
+  workflow_run:
+    workflows: [tests]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Manual runs always; automatic runs only if enabled and the tests passed.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.AUTO_DEPLOY == 'true' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+      INCLUDE_SETUP: ${{ github.event_name == 'workflow_dispatch' && inputs.include_setup || false }}
+      SITE_URL: ${{ vars.SITE_URL || 'https://bannerpromote.com' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Build the site files
+        run: |
+          php install.php --dir=build/site
+          rm -f build/site/config.php            # never overwrite the live config
+          rm -rf build/site/uploads              # never touch uploaded banners
+          if [ "$INCLUDE_SETUP" != "true" ]; then rm -f build/site/setup.php; fi
+          echo "Files to deploy:"; ls -la build/site
+
+      - name: Install the SFTP client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp >/dev/null && lftp --version | head -1
+
+      - name: Check the connection secrets
+        env:
+          H: ${{ secrets.SFTP_HOST }}
+          U: ${{ secrets.SFTP_USER }}
+          P: ${{ secrets.SFTP_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$H" ] || missing="$missing SFTP_HOST"
+          [ -n "$U" ] || missing="$missing SFTP_USER"
+          [ -n "$P" ] || missing="$missing SFTP_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing. Add them under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "All connection secrets are set."
+
+      - name: Check the server is ready (config.php present)
+        env:
+          SFTP_HOST: ${{ secrets.SFTP_HOST }}
+          SFTP_USER: ${{ secrets.SFTP_USER }}
+          LFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
+          SFTP_PORT: ${{ secrets.SFTP_PORT }}
+          SFTP_DIR: ${{ secrets.SFTP_DIR }}
+        run: |
+          out=$(lftp -e "set sftp:auto-confirm yes; set net:max-retries 2; set net:timeout 20;
+                         open -p ${SFTP_PORT:-22} -u \"$SFTP_USER\" --env-password sftp://$SFTP_HOST;
+                         cd \"${SFTP_DIR:-.}\"; pwd; cls -1; bye" 2>&1) || {
+            echo "::error::Could not log in or open the folder. Check SFTP_HOST, SFTP_USER, SFTP_PASSWORD (and SFTP_PORT/SFTP_DIR if set)."
+            echo "$out"
+            exit 1
+          }
+          echo "Connected. Current server folder and contents:"; echo "$out"
+          if ! echo "$out" | grep -qx 'config.php'; then
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::warning::config.php is not on the server yet. Upload your filled-in config.php once before a real deploy."
+            else
+              echo "::error::config.php is not on the server. Upload your filled-in config.php first (see GO-LIVE steps), then deploy again. Nothing was changed."
+              exit 1
+            fi
+          fi
+
+      - name: Upload files (nothing is uploaded on a dry run)
+        env:
+          SFTP_HOST: ${{ secrets.SFTP_HOST }}
+          SFTP_USER: ${{ secrets.SFTP_USER }}
+          LFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
+          SFTP_PORT: ${{ secrets.SFTP_PORT }}
+          SFTP_DIR: ${{ secrets.SFTP_DIR }}
+        run: |
+          dry=""; [ "$DRY_RUN" = "true" ] && dry="--dry-run"
+          # --reverse uploads local -> server. No --delete: nothing on the server is removed.
+          lftp -e "set sftp:auto-confirm yes; set net:max-retries 2; set net:timeout 30;
+                   open -p ${SFTP_PORT:-22} -u \"$SFTP_USER\" --env-password sftp://$SFTP_HOST;
+                   cd \"${SFTP_DIR:-.}\";
+                   mirror --reverse --verbose $dry --no-perms
+                          --exclude-glob config.php --exclude-glob config.local.php --exclude-glob uploads/
+                          build/site/ ./;
+                   bye"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::Dry run finished. Nothing was uploaded. Run again with 'Dry run' unticked to deploy."
+          fi
+
+      - name: Check the live site
+        if: env.DRY_RUN != 'true'
+        run: |
+          for page in advertise.php admin.php embed.js.php style.css; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/$page" || echo 000)
+            echo "$SITE_URL/$page -> HTTP $code"
+            [ "$code" = "200" ] || bad="$bad $page($code)"
+          done
+          if [ -n "$bad" ]; then
+            echo "::warning::Uploaded, but some pages did not load:$bad. Common causes: config.php database details, PHP version below 8.1, or the domain not pointing at this server yet."
+          else
+            echo "::notice::Deployed. $SITE_URL is live."
+          fi

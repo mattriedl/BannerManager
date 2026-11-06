@@ -129,6 +129,16 @@ Set your company name with `GB_BRAND_NAME` in `config.php` (default:
 `style.css`; the colours are defined at the top as CSS variables
 (`--ink` navy, `--brand` emerald) if you want to match your own brand.
 
+## Automatic deploys (GitHub Actions)
+
+`.github/workflows/deploy.yml` uploads the site to your host over SFTP.
+Add repository secrets `SFTP_HOST`, `SFTP_USER`, `SFTP_PASSWORD` (optional
+`SFTP_PORT`, `SFTP_DIR`), upload your filled-in `config.php` once, then run
+**Actions → Deploy → Run workflow** (dry run first). It never uploads
+`config.php`, never touches `uploads/` and never deletes server files. Set
+the repository variable `AUTO_DEPLOY=true` to deploy after every push that
+passes the tests.
+
 ## Deploy on SFTP-only hosting (no command line)
 
 1. Run `php install.php --dir=upload` on your computer (or in a Codespace).
