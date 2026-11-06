@@ -120,6 +120,17 @@ private ones. Each verified deploy notifies Bing through IndexNow (key file
 
 Your previous "Coming Soon" page is kept in `docs/original-coming-soon-index.html`.
 
+## Analytics and privacy
+
+Google Tag Manager (`GB_GTM_ID` in `config.php`, `''` turns it off) loads on
+public pages only, never in the admin console. Consent Mode defaults deny ad
+storage everywhere and analytics in the EU/EEA, UK and Switzerland. Visitors
+whose browser is set to a European time zone see a cookie popup, and nothing
+from Google loads until they accept. Everyone else gets analytics by default
+and can decline through "Cookie settings" in the footer. Choices are saved in
+the browser (`localStorage` key `bp_consent`). Fonts are hosted in `fonts/`
+(SIL Open Font License), so no requests go to Google Fonts.
+
 ## No self-ads
 
 A website never shows banners that link back to itself. When the embed code

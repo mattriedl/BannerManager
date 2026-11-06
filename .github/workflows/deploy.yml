@@ -177,6 +177,8 @@ jobs:
           curl -s --max-time 20 "$SITE_URL/embed.js.php" | grep -q '&site=' || bad="$bad embed.js.php(old version)"
           curl -s --max-time 20 "$SITE_URL/" | grep -q 'rel="canonical"' || bad="$bad home-page(old version)"
           curl -s --max-time 20 "$SITE_URL/sitemap.xml" | grep -q '<urlset' || bad="$bad sitemap.xml(invalid)"
+          curl -s --max-time 20 "$SITE_URL/" | grep -q 'googletagmanager.com/gtm.js' || bad="$bad home-page(no Tag Manager)"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/fonts/archivo.woff2"); [ "$code" = 200 ] || bad="$bad fonts($code)"
           j=$(curl -s --max-time 20 "$SITE_URL/serve.php?spot=leaderboard&site=deploy-check.invalid")
           echo "serve.php -> $j"
           echo "$j" | grep -q '"width":728' || bad="$bad serve.php(database not reachable?)"

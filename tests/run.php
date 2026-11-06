@@ -570,6 +570,29 @@ check(str_contains((string)@file_get_contents("$t2/sitemap.xml"), '<lastmod>2026
 check($code !== 0, 'an invalid --lastmod is rejected');
 sh('rm -rf ' . escapeshellarg($t2));
 
+section('Analytics, consent and self-hosted fonts');
+foreach (['/', '/advertise.php', '/pricing.php', '/faq.php'] as $path) {
+    [, , $h] = http('GET', $path, ['as' => 'ga']);
+    $headStart = strpos($h, '<head>') ?: 0;
+    check(str_contains($h, '"GTM-T9SK6QS3"') && strpos($h, 'gtag("consent","default"') < strpos($h, '<meta name="viewport"')
+          && str_contains($h, 'id="consent"') && str_contains($h, 'data-cookie-settings'),
+          "$path: consent defaults first in <head>, Tag Manager, cookie popup and footer link");
+    check(!str_contains($h, 'fonts.googleapis') && !str_contains($h, 'fonts.gstatic'), "$path: no requests to Google Fonts");
+}
+[, , $h] = http('GET', '/');
+check(str_contains($h, 'analytics_storage:"denied",region:["AT"') && str_contains($h, 'ad_storage:"denied",ad_user_data:"denied",ad_personalization:"denied",analytics_storage:"granted"'),
+      'Consent Mode: denied by default in Europe/UK, ads always denied');
+foreach (['/admin.php', '/setup.php', '/import.php'] as $path) {
+    [, , $h] = http('GET', $path, ['as' => 'ga-private']);
+    check(!str_contains($h, 'googletagmanager') && !str_contains($h, 'id="consent"'), "$path: no analytics");
+}
+[$s, $hd] = http('GET', '/fonts/archivo.woff2');
+[$s2] = http('GET', '/fonts/ibm-plex-sans.woff2');
+check($s === 200 && $s2 === 200 && filesize("$build/fonts/archivo.woff2") > 50000, 'self-hosted fonts are served');
+check(is_file("$build/fonts/OFL-Archivo.txt") && is_file("$build/fonts/OFL-IBMPlexSans.txt"), 'font licenses are included');
+[, , $css] = http('GET', '/style.css');
+check(str_contains($css, 'src: url(fonts/archivo.woff2)') && str_contains($css, 'src: url(fonts/ibm-plex-sans.woff2)'), 'style.css uses the local fonts');
+
 section('Branding');
 [, , $b] = http('GET', '/advertise.php', ['as' => 'brand']);
 check(str_contains($b, '<span class="wordmark"><b>Banner</b>Promote</span>'), 'BannerPromote wordmark in the header');
