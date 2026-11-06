@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS gb_banners (
   ends_at DATETIME NULL,
   impressions BIGINT UNSIGNED NOT NULL DEFAULT 0,
   clicks BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  tos_version VARCHAR(20) NULL,
+  tos_accepted_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_serve (spot_id, status, ends_at),
   FOREIGN KEY (spot_id) REFERENCES gb_spots(id) ON DELETE CASCADE
@@ -305,7 +307,8 @@ function gb_consent_banner(): string {
     if (!preg_match('/^GTM-[A-Z0-9]{4,12}$/', GB_GTM_ID)) return '';
     return '<div class="consent" id="consent" role="dialog" aria-modal="false" aria-labelledby="consent-title" hidden>'
          . '<p class="consent-title" id="consent-title">Analytics cookies</p>'
-         . '<p>We use Google Analytics to see which pages are useful and improve the site. It sets cookies only if you allow it.</p>'
+         . '<p>We use Google Analytics to see which pages are useful and improve the site. It sets cookies only if you allow it. '
+         . '<a href="privacy.php">Privacy Policy</a></p>'
          . '<div class="consent-actions"><button type="button" class="btn btn-primary btn-sm" data-consent="granted">Accept</button>'
          . '<button type="button" class="btn btn-secondary btn-sm" data-consent="denied">Decline</button></div></div>'
          . '<script>(function(){var b=document.getElementById("consent"),c=window.bpConsent;if(!b||!c)return;'
@@ -425,6 +428,7 @@ function gb_public_close(): string {
          . '<p>Self-serve banner advertising: pick an ad size, upload your banner and run it for 30 days.</p></div>'
          . '<nav aria-label="Site"><ul class="foot-links">' . $links
          . '<li><a href="mailto:' . e(GB_ADMIN_EMAIL) . '">Contact us</a></li>'
+         . '<li><a href="privacy.php">Privacy Policy</a></li><li><a href="terms.php">Terms of Service</a></li>'
          . (gb_consent_banner() !== '' ? '<li><a href="#" data-cookie-settings>Cookie settings</a></li>' : '')
          . '</ul></nav>'
          . '<p class="foot-legal">&copy; ' . date('Y') . ' ' . e(GB_BRAND_NAME) . '. All advertising is reviewed before publication. '
@@ -436,6 +440,31 @@ function gb_public_close(): string {
 function gb_cta(string $heading = 'Ready to run your banner?', string $text = 'Choose an ad size, upload your image and check out in a few minutes.'): string {
     return '<section class="cta-band"><div><h2>' . e($heading) . '</h2><p>' . e($text) . '</p></div>'
          . '<a class="btn btn-primary btn-lg" href="advertise.php">Buy a banner ad</a></section>';
+}
+
+/** Current Terms of Service version (its effective date). Orders record which version was accepted. */
+if (!defined('GB_TOS_VERSION'))  define('GB_TOS_VERSION', '2026-11-06');
+if (!defined('GB_PRIVACY_DATE')) define('GB_PRIVACY_DATE', '2026-11-06');
+
+/**
+ * Add columns introduced after a site was first set up (safe to call often).
+ * Returns true when the Terms-of-Service columns exist. Never touches data.
+ */
+function gb_migrate(?PDO $db = null): bool {
+    static $done = null;
+    if ($db === null && $done !== null) return $done;
+    $db ??= gb_db();
+    $has = function (string $col) use ($db): bool {
+        try { $db->query("SELECT $col FROM gb_banners LIMIT 0"); return true; } catch (PDOException $ex) { return false; }
+    };
+    $ok = true;
+    foreach (['tos_version' => 'VARCHAR(20) NULL', 'tos_accepted_at' => 'DATETIME NULL'] as $col => $type) {
+        if ($has($col)) continue;
+        try { $db->exec("ALTER TABLE gb_banners ADD COLUMN $col $type"); }
+        catch (PDOException $ex) { $ok = false; error_log('BannerPromote: could not add column ' . $col . ': ' . $ex->getMessage()); }
+    }
+    $ok = $ok && $has('tos_version') && $has('tos_accepted_at');
+    return $done = $ok;
 }
 
 if (!defined('GB_PRICE_PITCH')) define('GB_PRICE_PITCH', '$10 for 30 days');   // headline price on the home page
@@ -1195,6 +1224,17 @@ body.login { min-height: 100vh; display: grid; place-items: center; padding: 24p
 .size-card strong { display: block; color: var(--ink); }
 .size-card span { color: var(--muted); font-size: 13.5px; }
 
+/* ---------- legal pages and agreement ---------- */
+.legal h2 { font-size: 20px; }
+.rule-box { border: 1px solid #F4C7C1; background: var(--danger-tint); border-radius: var(--r-md); padding: 4px 24px 12px; margin: 26px 0; }
+.rule-box h2 { color: #7A1A12; margin-top: 18px; }
+.rule-box p, .rule-box li { color: #5C140E; }
+.agree { display: flex; gap: 12px; align-items: flex-start; margin-top: 22px; padding: 16px 18px; border: 1px solid var(--line);
+  border-radius: var(--r-sm); background: var(--field); font-size: 14.5px; cursor: pointer; }
+.agree input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--brand); }
+.agree:has(input:checked) { border-color: var(--brand); background: #F7FBF9; }
+.consent p a { color: var(--brand); }
+
 /* ---------- cookie popup ---------- */
 .consent { position: fixed; left: 16px; bottom: 16px; z-index: 50; max-width: 400px; background: var(--paper);
   border: 1px solid var(--line); border-radius: var(--r-md); padding: 18px 20px; box-shadow: 0 8px 30px rgba(20,33,61,.18); }
@@ -1287,6 +1327,7 @@ if (GB_ADMIN_PASSWORD === 'CHANGE-ME-NOW' || strlen(GB_ADMIN_PASSWORD) < 10) {
             foreach ($tables as $t)
                 $done[] = in_array($t, $before, true) ? "Table $t already existed, kept as is." : "Created table $t.";
 
+            if (gb_migrate($db)) $done[] = 'Terms of Service columns are in place.';
             // Upgrade older installs: allow manual ("Mark paid") orders.
             if ($db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql')
                 $db->exec("ALTER TABLE gb_orders MODIFY gateway ENUM('paypal','stripe','manual') NOT NULL");
@@ -1920,6 +1961,167 @@ echo gb_site_open('Banner advertising FAQ', 'Answers to the questions advertiser
 <?= gb_public_close() ?>
 PAGE_FAQ;
 
+$files['terms.php'] = <<<'PAGE_TERMS'
+<?php
+declare(strict_types=1);
+require __DIR__ . '/config.php';
+
+/* Terms of Service. Advertisers must accept these to place an order.
+   When you change the rules, update GB_TOS_VERSION (lib.php) so new orders record the new version. */
+
+echo gb_site_open('Terms of Service', 'The rules for advertising with ' . GB_BRAND_NAME
+    . '. You must agree to them to place an order. No exceptions.', [
+    'path'        => '/terms.php',
+    'title_full'  => 'Terms of Service for Banner Advertisers | ' . GB_BRAND_NAME,
+    'description' => 'The rules every ' . GB_BRAND_NAME . ' advertiser agrees to: no fraud, no adult content, nothing illegal '
+                   . 'and no redirecting your link. Broken rules mean removal with no refund.',
+    'jsonld'      => [gb_breadcrumb('Terms of Service', '/terms.php')],
+], 'Terms of Service');
+?>
+<article class="article prose legal">
+  <p class="muted">Version <?= e(GB_TOS_VERSION) ?>. Effective <?= e(date('F j, Y', strtotime(GB_TOS_VERSION))) ?>.</p>
+
+  <p>These terms apply to everyone who buys banner advertising from <?= e(GB_BRAND_NAME) ?> ("we", "us").
+    By ticking "I agree to the Terms of Service" and submitting an order, you ("the advertiser") accept them in full.
+    If you do not agree, do not place an order.</p>
+
+  <h2>1. Who can advertise</h2>
+  <p>You must be at least 18 years old and, if you order for a business, have the authority to accept these terms on its behalf.</p>
+
+  <h2>2. Ads that are not allowed</h2>
+  <p>Your banner, your link and the website it leads to must not contain, promote or link to:</p>
+  <ul>
+    <li><strong>Fraud or deception</strong>, including scams, phishing, fake offers, impersonation, misleading claims or anything designed to trick people.</li>
+    <li><strong>Pornography or sexually explicit material</strong>, including adult services and dating or escort sites of a sexual nature.</li>
+    <li><strong>Anything illegal</strong>, including illegal products, services, drugs, weapons, gambling where it is unlawful, or content that infringes someone else's copyright or trademark.</li>
+    <li><strong>Malware or harmful software</strong>, including viruses, unwanted downloads or pages that attack visitors' devices.</li>
+  </ul>
+
+  <h2>3. Your link must stay as approved</h2>
+  <p>The address you submit must be the final page visitors land on. After your banner and link are submitted, you must not:</p>
+  <ul>
+    <li>redirect or forward the link to another page, website or location;</li>
+    <li>use link shorteners, cloaking, or different content for reviewers and visitors; or</li>
+    <li>replace the landing page with content that breaks these rules.</li>
+  </ul>
+
+  <h2>4. Review</h2>
+  <p>We review every banner and landing page before it goes live and may check them at any time while it runs.
+    We may decline any ad that we believe breaks these terms or is unsuitable for the websites that show our ads.</p>
+
+  <div class="rule-box" role="note">
+    <h2>5. Breaking the rules</h2>
+    <p>If any of these rules is broken, at any time and in any way:</p>
+    <ul>
+      <li>your banner ad is <strong>terminated immediately</strong>, without notice;</li>
+      <li><strong>no refund</strong> is given, for any part of the run; and</li>
+      <li>we may share your order details and any related information with the <strong>appropriate law enforcement authorities</strong> where required or where we believe a crime has been committed.</li>
+    </ul>
+    <p><strong>No exceptions. Breaking the rules of any kind will not be tolerated.</strong></p>
+  </div>
+
+  <h2>6. Payment and refunds</h2>
+  <p>You pay the full price of the run when you order. Your run starts when your ad is approved and lasts for the period shown for your placement.
+    Refunds are given only at our discretion, and never when an ad is removed for breaking these terms.</p>
+
+  <h2>7. No guaranteed results</h2>
+  <p>Your banner is shown in rotation with other banners of the same size. We do not guarantee a number of views, clicks, sales or any other result.</p>
+
+  <h2>8. Your responsibility</h2>
+  <p>You are responsible for your banner, your link and your website, and for having the rights to everything in your ad.
+    You agree to cover any claims, losses or costs that arise because your ad or website broke these terms or the law.</p>
+
+  <h2>9. Changes</h2>
+  <p>We may update these terms. The version you agreed to applies to your order; new orders use the version in force when they are placed.</p>
+
+  <h2>10. Contact</h2>
+  <p>Questions about these terms: <a href="mailto:<?= e(GB_ADMIN_EMAIL) ?>"><?= e(GB_ADMIN_EMAIL) ?></a>.
+    See also our <a href="privacy.php">Privacy Policy</a>.</p>
+</article>
+<?= gb_public_close() ?>
+PAGE_TERMS;
+
+$files['privacy.php'] = <<<'PAGE_PRIVACY'
+<?php
+declare(strict_types=1);
+require __DIR__ . '/config.php';
+
+/* Privacy Policy. Keep it in step with what the site actually does; update GB_PRIVACY_DATE when you change it. */
+
+echo gb_site_open('Privacy Policy', 'What information ' . GB_BRAND_NAME . ' collects, why, who it is shared with, and the choices you have.', [
+    'path'        => '/privacy.php',
+    'title_full'  => 'Privacy Policy | ' . GB_BRAND_NAME,
+    'description' => 'How ' . GB_BRAND_NAME . ' handles advertiser and visitor information: order details, payments via Stripe and PayPal, '
+                   . 'analytics cookies with consent, and your privacy rights.',
+    'jsonld'      => [gb_breadcrumb('Privacy Policy', '/privacy.php')],
+], 'Privacy Policy');
+$mail = '<a href="mailto:' . e(GB_ADMIN_EMAIL) . '">' . e(GB_ADMIN_EMAIL) . '</a>';
+?>
+<article class="article prose legal">
+  <p class="muted">Effective <?= e(date('F j, Y', strtotime(GB_PRIVACY_DATE))) ?>.</p>
+
+  <p>This policy explains how <?= e(GB_BRAND_NAME) ?> ("we", "us") collects and uses information on <?= e(parse_url(GB_BASE_URL, PHP_URL_HOST) ?: 'this website') ?>
+    and through the banner ads we serve on other websites. We do not sell personal information.</p>
+
+  <h2>Information we collect</h2>
+  <h3>When you order a banner ad</h3>
+  <ul>
+    <li>Your name or company name and your e-mail address.</li>
+    <li>Your banner image and the web address it links to.</li>
+    <li>Your order details: the placement, price, dates, and when you agreed to our <a href="terms.php">Terms of Service</a> and which version.</li>
+    <li>Payment status and a transaction reference from Stripe or PayPal. <strong>We never receive or store your card number</strong>; card payments are handled by Stripe, and PayPal payments by PayPal.</li>
+  </ul>
+  <h3>When you visit this website</h3>
+  <ul>
+    <li><strong>Essential cookie.</strong> A session cookie keeps the order form and admin login secure. It is needed for the site to work and is deleted when you close your browser.</li>
+    <li><strong>Analytics (optional).</strong> With your permission we use Google Analytics, through Google Tag Manager, to understand which pages are used. It may set cookies and collects information such as the pages you view, your browser and device type, approximate location and how you arrived. Visitors in Europe and the UK are asked first and nothing from Google loads until they agree.</li>
+    <li><strong>Your cookie choice</strong> is saved in your browser so we don't ask again.</li>
+    <li>Like most websites, our hosting provider keeps standard server logs (such as IP address, browser and pages requested) for security and troubleshooting.</li>
+  </ul>
+  <h3>When you see one of our ads on another website</h3>
+  <p>To choose and display a banner, our ad server receives the name of the website showing the ad, and counts how many times each banner is shown and clicked per day.
+    These counts are totals; we do not build profiles of the people who see or click ads, and our ads do not set tracking cookies.</p>
+
+  <h2>How we use information</h2>
+  <ul>
+    <li>To process orders and payments, review ads, and send you order, approval and receipt e-mails.</li>
+    <li>To show banners, count views and clicks, and stop fraud and abuse.</li>
+    <li>To understand and improve the website (analytics, only with permission where required).</li>
+    <li>To enforce our <a href="terms.php">Terms of Service</a> and meet legal obligations.</li>
+  </ul>
+
+  <h2>Who we share it with</h2>
+  <ul>
+    <li><strong>Stripe and PayPal</strong>, to process payments.</li>
+    <li><strong>Google</strong>, for analytics, if you allow it.</li>
+    <li><strong>Our hosting provider</strong>, which stores the website and its data.</li>
+    <li><strong>Law enforcement or other authorities</strong>, when the law requires it or when we believe it is necessary to report fraud, illegal activity or a breach of our Terms of Service.</li>
+  </ul>
+  <p>Your banner image and link are, of course, shown publicly while your ad runs.</p>
+
+  <h2>Your choices and rights</h2>
+  <ul>
+    <li><strong>Analytics:</strong> accept or decline at any time with <a href="#" data-cookie-settings>Cookie settings</a>. You can also block cookies in your browser.</li>
+    <li><strong>Do Not Track:</strong> our site does not respond to browser "Do Not Track" signals; use Cookie settings to turn analytics off instead.</li>
+    <li><strong>Your information:</strong> e-mail <?= $mail ?> to ask what information we hold about you, to correct it, or to delete it. We may keep records we are required to keep, such as payment records, or that we need to enforce our terms.</li>
+    <li>Depending on where you live (for example in California, the EU or the UK), you may have additional rights, such as to object to processing or to complain to a data protection authority. Contact us and we will help.</li>
+  </ul>
+
+  <h2>How long we keep it</h2>
+  <p>We keep order and payment records for as long as needed to run our business and meet tax and legal requirements. Banner images are kept while your ad is in our system and can be deleted on request after your run ends.</p>
+
+  <h2>Children</h2>
+  <p>This website is for businesses and adults. It is not directed to children under 13, and we do not knowingly collect their information.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If we change this policy we will update the date at the top of this page.</p>
+
+  <h2>Contact</h2>
+  <p>Privacy questions or requests: <?= $mail ?>.</p>
+</article>
+<?= gb_public_close() ?>
+PAGE_PRIVACY;
+
 $files['sitemap.xml.php'] = <<<'PAGE_SITEMAP'
 <?php
 declare(strict_types=1);
@@ -2006,13 +2208,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException(sprintf('Image is %d×%d but the %s slot needs exactly %d×%d.',
                 $dims[0], $dims[1], $spot['name'], $spot['width'], $spot['height']));
 
+        if (($_POST['tos'] ?? '') !== '1')
+            throw new RuntimeException('Please read and agree to the Terms of Service to place your order.');
+
         [$path, $w, $h] = gb_save_upload($_FILES['image'] ?? []);
 
-        gb_db()->prepare(
-            "INSERT INTO gb_banners (spot_id, advertiser_name, advertiser_email,
-             kind, image_path, target_url, width, height, status, paid)
-             VALUES (?,?,?,'image',?,?,?,?, 'pending', 0)")
-            ->execute([(int)$spot['id'], $name, $email, $path, $url, $w, $h]);
+        if (gb_migrate()) {   // record which Terms version was accepted, and when
+            gb_db()->prepare(
+                "INSERT INTO gb_banners (spot_id, advertiser_name, advertiser_email,
+                 kind, image_path, target_url, width, height, status, paid, tos_version, tos_accepted_at)
+                 VALUES (?,?,?,'image',?,?,?,?, 'pending', 0, ?, ?)")
+                ->execute([(int)$spot['id'], $name, $email, $path, $url, $w, $h, GB_TOS_VERSION, gmdate('Y-m-d H:i:s')]);
+        } else {               // database not upgradable: still take the order
+            gb_db()->prepare(
+                "INSERT INTO gb_banners (spot_id, advertiser_name, advertiser_email,
+                 kind, image_path, target_url, width, height, status, paid)
+                 VALUES (?,?,?,'image',?,?,?,?, 'pending', 0)")
+                ->execute([(int)$spot['id'], $name, $email, $path, $url, $w, $h]);
+        }
 
         $bid = (int)gb_db()->lastInsertId();
         gb_redirect('preview.php?id=' . $bid . '&sig=' . gb_sig($bid));
@@ -2103,6 +2316,12 @@ echo gb_public_open('Buy a banner ad', 'Choose an ad size, upload your banner an
           <strong><?= (int)$current['width'] ?> × <?= (int)$current['height'] ?> px</strong>.</span></p>
       </aside>
     </div>
+    <label class="agree">
+      <input type="checkbox" name="tos" value="1" required <?= ($_POST['tos'] ?? '') === '1' ? 'checked' : '' ?>>
+      <span>I agree to the <a href="terms.php" target="_blank">Terms of Service</a>: no fraud, no adult content, nothing illegal,
+        and no redirecting my link after it is submitted. I understand that breaking any rule means my ad is removed
+        immediately with no refund. See our <a href="privacy.php" target="_blank">Privacy Policy</a>.</span>
+    </label>
     <div class="form-foot">
       <p class="muted small">Next you'll see a preview and choose how to pay. You won't be charged yet.</p>
       <button class="btn btn-primary btn-lg" type="submit">Continue to preview</button>
@@ -2713,7 +2932,9 @@ if ($a === 'banners') {
         foreach ($rows as $r) {
             $ctr = $r['impressions'] > 0 ? sprintf('%.2f%%', 100 * $r['clicks'] / $r['impressions']) : '—';
             $body .= '<tr><td><div class="with-thumb">' . gb_thumb($r) . '<div><div class="cell-main">#' . (int)$r['id'] . ' ' . e($r['spot_name']) . '</div>'
-                   . '<div class="cell-sub">' . (int)$r['width'] . ' × ' . (int)$r['height'] . ($r['kind'] === 'html' ? ', HTML' : '') . '</div></div></div></td>'
+                   . '<div class="cell-sub">' . (int)$r['width'] . ' × ' . (int)$r['height'] . ($r['kind'] === 'html' ? ', HTML' : '') . '</div>'
+                   . (!empty($r['tos_accepted_at']) ? '<div class="cell-sub" title="Accepted ' . e((string)$r['tos_accepted_at']) . ' UTC">Terms v' . e((string)$r['tos_version']) . ' accepted</div>' : '')
+                   . '</div></div></td>'
                    . '<td>' . ($r['advertiser_name'] ? '<div class="cell-main">' . e($r['advertiser_name']) . '</div><div class="cell-sub">' . e($r['advertiser_email']) . '</div>' : '<span class="muted">House banner</span>') . '</td>'
                    . '<td>' . gb_status_cell($r) . '</td>'
                    . '<td class="n">' . number_format((float)$r['impressions']) . '</td>'

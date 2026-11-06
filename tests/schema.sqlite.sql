@@ -32,6 +32,8 @@ CREATE TABLE gb_banners (
   ends_at TEXT NULL,
   impressions INTEGER NOT NULL DEFAULT 0,
   clicks INTEGER NOT NULL DEFAULT 0,
+  tos_version TEXT NULL,
+  tos_accepted_at TEXT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_serve ON gb_banners (spot_id, status, ends_at);

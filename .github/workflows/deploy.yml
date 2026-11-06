@@ -166,7 +166,7 @@ jobs:
         if: env.DRY_RUN != 'true'
         run: |
           bad=""
-          for page in "" advertise.php pricing.php banner-ad-sizes.php how-to-buy-banner-ads.php faq.php \
+          for page in "" advertise.php pricing.php banner-ad-sizes.php how-to-buy-banner-ads.php faq.php privacy.php terms.php \
                       admin.php embed.js.php style.css favicon.svg robots.txt sitemap.xml og-image.png; do
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/$page" || echo 000)
             echo "$SITE_URL/$page -> HTTP $code"

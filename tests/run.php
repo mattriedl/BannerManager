@@ -158,7 +158,7 @@ $wrong = png(728, 90, "$tmp/wrong.png");
 file_put_contents("$tmp/evil.png", "<?php echo 'pwned'; ?>");
 $fields = fn(string $file, string $tok) => ['csrf' => $tok, 'spot' => 'medium-rectangle', 'name' => 'Ada Advertiser',
     'email' => 'ada@example.test', 'url' => 'https://advertiser.example.test/landing',
-    'image' => new CURLFile($file, 'image/png', basename($file))];
+    'tos' => '1', 'image' => new CURLFile($file, 'image/png', basename($file))];
 
 [$s, , $b] = http('POST', '/advertise.php', ['as' => 'nosession', 'body' => $fields($good, 'deadbeef')]);
 check($s === 200 && str_contains($b, 'Session expired'), 'POST without a session/CSRF is rejected (no TypeError)', substr(strip_tags($b), 0, 200));
@@ -181,6 +181,16 @@ check(($bn['status'] ?? '') === 'pending' && (int)$bn['paid'] === 0, 'banner sto
 check(count(glob("$build/uploads/*.png")) === 1, 'image stored with random name in uploads/');
 
 /* ---------- 5. preview ---------- */
+$f = $fields($good, $csrf); unset($f['tos']);
+$before = (int)gb_db()->query('SELECT COUNT(*) FROM gb_banners')->fetchColumn();
+[, , $b] = http('POST', '/advertise.php', ['as' => 'adv', 'body' => $f]);
+check(str_contains($b, 'agree to the Terms of Service') && (int)gb_db()->query('SELECT COUNT(*) FROM gb_banners')->fetchColumn() === $before,
+      'order without agreeing to the Terms is refused (server-side, even if the checkbox is bypassed)');
+check(str_contains($form, 'name="tos" value="1" required') && str_contains($form, 'href="terms.php"'), 'order form has a required Terms checkbox linking to the Terms');
+$bn = banner($bid);
+check(($bn['tos_version'] ?? '') === GB_TOS_VERSION && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', (string)($bn['tos_accepted_at'] ?? '')) === 1,
+      'the order records the Terms version and the time it was accepted', json_encode([$bn['tos_version'] ?? null, $bn['tos_accepted_at'] ?? null]));
+
 section('Preview page');
 [$s] = http('GET', "/preview.php?id=$bid&sig=000000000000000000000000");
 check($s === 404, 'preview with bad signature -> 404');
@@ -592,6 +602,37 @@ check($s === 200 && $s2 === 200 && filesize("$build/fonts/archivo.woff2") > 5000
 check(is_file("$build/fonts/OFL-Archivo.txt") && is_file("$build/fonts/OFL-IBMPlexSans.txt"), 'font licenses are included');
 [, , $css] = http('GET', '/style.css');
 check(str_contains($css, 'src: url(fonts/archivo.woff2)') && str_contains($css, 'src: url(fonts/ibm-plex-sans.woff2)'), 'style.css uses the local fonts');
+
+section('Privacy Policy and Terms of Service');
+foreach (['/privacy.php' => 'Privacy Policy', '/terms.php' => 'Terms of Service'] as $path => $h1) {
+    [$s, , $h] = http('GET', $path, ['as' => 'legal']);
+    check($s === 200 && str_contains($h, "<h1>$h1</h1>") && str_contains($h, 'name="robots" content="index, follow')
+          && str_contains($h, 'rel="canonical" href="' . gb_url($path) . '"'), "$path is live and indexable");
+}
+[, , $h] = http('GET', '/terms.php');
+foreach (['Fraud or deception', 'Pornography or sexually explicit material', 'Anything illegal', 'redirect or forward the link',
+          'terminated immediately', 'no refund', 'law enforcement authorities', 'No exceptions'] as $rule)
+    check(str_contains($h, $rule), "Terms include: $rule");
+[, , $h] = http('GET', '/privacy.php');
+foreach (['We never receive or store your card number', 'Google Analytics', 'Stripe and PayPal', 'Do Not Track', 'Law enforcement'] as $item)
+    check(str_contains($h, $item), "Privacy Policy covers: $item");
+[, , $h] = http('GET', '/');
+check(str_contains($h, 'href="privacy.php">Privacy Policy</a>') && str_contains($h, 'href="terms.php">Terms of Service</a>'), 'footer links to both legal pages');
+check(substr_count($h, 'href="privacy.php"') >= 2, 'cookie popup links to the Privacy Policy');
+
+// An older database (before the Terms columns) is upgraded without losing data.
+$old = new PDO('sqlite::memory:'); $old->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$old->exec("CREATE TABLE gb_banners (id INTEGER PRIMARY KEY, target_url TEXT)");
+$old->exec("INSERT INTO gb_banners (target_url) VALUES ('https://kept.example')");
+check(gb_migrate($old) === true, 'older database gets the Terms columns added');
+check($old->query("SELECT target_url FROM gb_banners")->fetchColumn() === 'https://kept.example', 'existing banners are kept during the upgrade');
+check(gb_migrate($old) === true, 'running the upgrade again is harmless');
+if ($mode === 'mysql') {   // the live site's path: real MySQL without the columns
+    $cnt = (int)gb_db()->query('SELECT COUNT(*) FROM gb_banners')->fetchColumn();
+    gb_db()->exec('ALTER TABLE gb_banners DROP COLUMN tos_version, DROP COLUMN tos_accepted_at');
+    check(gb_migrate(gb_db()) === true && (int)gb_db()->query('SELECT COUNT(*) FROM gb_banners')->fetchColumn() === $cnt,
+          'MySQL: missing Terms columns are added back, banners kept');
+}
 
 section('Branding');
 [, , $b] = http('GET', '/advertise.php', ['as' => 'brand']);
