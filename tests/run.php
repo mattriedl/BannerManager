@@ -47,8 +47,8 @@ check(str_contains($out, 'SKIP') && $code === 0, 'second run skips existing file
 [, $sql] = sh('php ' . escapeshellarg("$root/install.php") . ' --print-sql');
 check(substr_count($sql, '-- [') === 5, 'schema splits into exactly 5 statements', $sql);
 check(preg_match('/^--(?! \[\d+\])/m', $sql) === 0, 'no statement starts with a comment (original installer skipped those)', $sql);
-check(str_contains($sql, 'CREATE TABLE gb_spots'), 'schema import includes CREATE TABLE gb_spots (regression)');
-check(str_contains($sql, 'INSERT INTO gb_spots'), 'schema import includes the 8 seed spots (regression)');
+check(str_contains($sql, 'CREATE TABLE IF NOT EXISTS gb_spots'), 'schema import includes CREATE TABLE gb_spots (regression)');
+check(str_contains($sql, 'INSERT IGNORE INTO gb_spots'), 'schema import includes the 8 seed spots (regression)');
 
 /* ---------- 2. database + server ---------- */
 section("Database ($mode) + web server");
@@ -429,6 +429,42 @@ foreach (['/advertise.php' => 'adv', "/preview.php?id=$did&sig=" . gb_sig($did) 
     [, , $b] = http('GET', $page, ['as' => $who]);
     check(str_contains($b, 'href="style.css?v=') && str_contains($b, GB_BRAND_NAME), "$page uses the shared design and brand name");
 }
+
+section('Browser setup page (setup.php)');
+$counts = fn() => [(int)gb_db()->query('SELECT COUNT(*) FROM gb_spots')->fetchColumn(),
+                   (int)gb_db()->query('SELECT COUNT(*) FROM gb_banners')->fetchColumn(),
+                   (int)gb_db()->query('SELECT COUNT(*) FROM gb_orders')->fetchColumn()];
+$runSetup = function (string $pw) {
+    [, , $p] = http('GET', '/setup.php', ['as' => 'setup']);
+    return http('POST', '/setup.php', ['as' => 'setup', 'body' => ['csrf' => csrf_from($p), 'password' => $pw]]);
+};
+[$s, , $p] = http('GET', '/setup.php', ['as' => 'setup']);
+check($s === 200 && str_contains($p, 'Run setup'), 'setup.php asks for the admin password');
+[, , $p] = $runSetup('wrong-password');
+check(str_contains($p, 'password is not correct') && !str_contains($p, 'Setup complete'), 'setup.php refuses a wrong password');
+$keep = $counts();
+[$s, , $p] = $runSetup(GB_ADMIN_PASSWORD);
+check($s === 200 && str_contains($p, 'Setup complete') && substr_count($p, 'already existed, kept as is') === 4,
+      'on an existing site, setup keeps all 4 tables', strip_tags($p));
+check($counts() === $keep, 'existing placements, banners and orders are untouched', json_encode([$keep, $counts()]));
+check(str_contains($p, 'Placements already exist, kept as is'), 'starter placements are not re-added');
+if ($mode === 'mysql') {
+    foreach (['gb_stats', 'gb_orders', 'gb_banners', 'gb_spots'] as $t) gb_db()->exec("DROP TABLE $t");
+    [, , $p] = $runSetup(GB_ADMIN_PASSWORD);
+    check(substr_count($p, 'Created table') === 4 && str_contains($p, 'Added the 8 starter placements'), 'on an empty database, setup creates everything', strip_tags($p));
+    check($counts() === [8, 0, 0], 'fresh database has the 8 placements and no banners');
+    [, , $p] = $runSetup(GB_ADMIN_PASSWORD);
+    check($counts() === [8, 0, 0] && substr_count($p, 'already existed') === 4, 'running setup twice changes nothing');
+}
+
+section('Branding');
+[, , $b] = http('GET', '/advertise.php', ['as' => 'brand']);
+check(str_contains($b, '<span class="wordmark"><b>Banner</b>Promote</span>'), 'BannerPromote wordmark in the header');
+check(str_contains($b, '<title>Advertise with BannerPromote | BannerPromote</title>'), 'page titles use BannerPromote');
+[$s, $h] = http('GET', '/favicon.svg');
+check($s === 200 && str_contains($h['content-type'] ?? '', 'svg'), 'favicon is served');
+[, , $cfg] = [0, 0, (string)file_get_contents("$build/config.php")];
+check(str_contains($cfg, "'https://bannerpromote.com'") && str_contains($cfg, "'BannerPromote'"), 'config.php defaults to bannerpromote.com');
 
 section('Safety guard');
 [$srv2, $up2] = start_server($build, $port + 1, array_merge($envVars, ['GB_TEST_ADMIN_PASS' => 'CHANGE-ME-NOW']));

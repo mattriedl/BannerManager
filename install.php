@@ -37,8 +37,9 @@ $files = [];
 
 $files['schema.sql'] = <<<'SCHEMA_FILE'
 -- Import with: mysql -u USER -p DBNAME < schema.sql
+-- or open setup.php in a browser. Safe to run again: existing data is kept.
 
-CREATE TABLE gb_spots (
+CREATE TABLE IF NOT EXISTS gb_spots (
   id INT AUTO_INCREMENT PRIMARY KEY,
   slug VARCHAR(60) NOT NULL UNIQUE,
   name VARCHAR(120) NOT NULL,
@@ -49,7 +50,7 @@ CREATE TABLE gb_spots (
   is_active TINYINT(1) NOT NULL DEFAULT 1
 ) ENGINE=InnoDB;
 
-CREATE TABLE gb_banners (
+CREATE TABLE IF NOT EXISTS gb_banners (
   id INT AUTO_INCREMENT PRIMARY KEY,
   spot_id INT NOT NULL,
   advertiser_name VARCHAR(120) NULL,
@@ -71,7 +72,7 @@ CREATE TABLE gb_banners (
   FOREIGN KEY (spot_id) REFERENCES gb_spots(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE gb_orders (
+CREATE TABLE IF NOT EXISTS gb_orders (
   id INT AUTO_INCREMENT PRIMARY KEY,
   banner_id INT NOT NULL,
   gateway ENUM('paypal','stripe','manual') NOT NULL,
@@ -83,7 +84,7 @@ CREATE TABLE gb_orders (
   FOREIGN KEY (banner_id) REFERENCES gb_banners(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE gb_stats (
+CREATE TABLE IF NOT EXISTS gb_stats (
   banner_id INT NOT NULL,
   day DATE NOT NULL,
   impressions INT UNSIGNED NOT NULL DEFAULT 0,
@@ -92,8 +93,9 @@ CREATE TABLE gb_stats (
   FOREIGN KEY (banner_id) REFERENCES gb_banners(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 8 preset sizes seeded as sellable spots (add custom sizes in admin):
-INSERT INTO gb_spots (slug,name,width,height,price,period_days) VALUES
+-- 8 preset sizes seeded as sellable spots (add custom sizes in admin).
+-- INSERT IGNORE: re-running never duplicates or overwrites placements.
+INSERT IGNORE INTO gb_spots (slug,name,width,height,price,period_days) VALUES
 ('medium-rectangle','Medium Rectangle',300,250,10.00,30),
 ('leaderboard','Leaderboard',728,90,10.00,30),
 ('full-banner','Full Banner',468,60,10.00,30),
@@ -120,17 +122,18 @@ if (is_file(__DIR__ . '/config.local.php')) {
     return;
 }
 
-// --- Database ---
+// --- Database (CHANGE: create a MySQL database in your hosting control
+//     panel and copy its name, user and password here) ---
 define('GB_DB_HOST', 'localhost');
-define('GB_DB_NAME', 'greenbox');
-define('GB_DB_USER', 'root');
-define('GB_DB_PASS', '');
+define('GB_DB_NAME', 'YOUR_DATABASE_NAME');
+define('GB_DB_USER', 'YOUR_DATABASE_USER');
+define('GB_DB_PASS', 'YOUR_DATABASE_PASSWORD');
 
 // --- Site ---
-define('GB_BRAND_NAME', 'Kestrel Media');          // shown on every page
-define('GB_BASE_URL', 'https://ads.example.com'); // no trailing slash!
-define('GB_ADMIN_PASSWORD', 'CHANGE-ME-NOW');   // strong password required
-define('GB_ADMIN_EMAIL', 'admin@example.com');   // receives payment alerts
+define('GB_BRAND_NAME', 'BannerPromote');          // shown on every page
+define('GB_BASE_URL', 'https://bannerpromote.com'); // no trailing slash!
+define('GB_ADMIN_PASSWORD', 'CHANGE-ME-NOW');   // CHANGE: admin console password (10+ characters)
+define('GB_ADMIN_EMAIL', 'admin@bannerpromote.com'); // CHANGE: your inbox for payment alerts
 
 // --- Uploads ---
 define('GB_UPLOAD_DIR', __DIR__ . '/uploads');
@@ -142,7 +145,7 @@ define('GB_BLOCK_SELF_ADS', true); // never show a banner on the website it link
 define('GB_CURRENCY', 'USD');
 
 // --- PayPal ---
-define('GB_PAYPAL_BUSINESS', 'seller@example.com');
+define('GB_PAYPAL_BUSINESS', 'YOUR-PAYPAL-EMAIL@example.com'); // CHANGE: the PayPal account that receives payments
 define('GB_PAYPAL_SANDBOX', true);  // true while testing, false for live
 
 // --- Stripe (raw REST, no SDK needed) ---
@@ -150,7 +153,7 @@ define('GB_STRIPE_SECRET', 'sk_test_REPLACE');
 define('GB_STRIPE_WEBHOOK_SECRET', 'whsec_REPLACE');
 
 // --- Mail ---
-define('GB_MAIL_FROM', 'noreply@example.com');
+define('GB_MAIL_FROM', 'noreply@bannerpromote.com');
 
 date_default_timezone_set('UTC');
 
@@ -228,14 +231,19 @@ function gb_money(float $v): string { return number_format($v, 2) . ' ' . GB_CUR
 
 /* ---------------- shared page chrome ---------------- */
 
-if (!defined('GB_BRAND_NAME')) define('GB_BRAND_NAME', 'Kestrel Media');
+if (!defined('GB_BRAND_NAME')) define('GB_BRAND_NAME', 'BannerPromote');
 
-/** Brand mark: three blocks of a page layout (placeholder logo). */
+/** BannerPromote mark: a banner shaped like a forward arrow, on a rounded square. */
 function gb_brand_mark(): string {
-    return '<svg viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="4" fill="currentColor"/>'
-         . '<rect x="5.5" y="5.5" width="15" height="5.5" rx="1" fill="#14213D"/>'
-         . '<rect x="5.5" y="13" width="6.5" height="7.5" rx="1" fill="#14213D"/>'
-         . '<rect x="14" y="13" width="6.5" height="7.5" rx="1" fill="#14213D" opacity=".45"/></svg>';
+    return '<svg viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="6" fill="currentColor"/>'
+         . '<path d="M6 8.5h11.5L23 14l-5.5 5.5H6l3.2-5.5z" fill="#fff"/></svg>';
+}
+
+/** Wordmark: "BannerPromote" set as Banner (heavy) + Promote (light). Other names print as-is. */
+function gb_wordmark(): string {
+    if (preg_match('/^([A-Z][a-z]+)([A-Z][A-Za-z]+)$/', GB_BRAND_NAME, $m))
+        return '<span class="wordmark"><b>' . e($m[1]) . '</b>' . e($m[2]) . '</span>';
+    return '<span class="wordmark"><b>' . e(GB_BRAND_NAME) . '</b></span>';
 }
 
 function gb_head(string $title, string $bodyClass = ''): string {
@@ -244,6 +252,7 @@ function gb_head(string $title, string $bodyClass = ''): string {
          . '<title>' . e($title) . ' | ' . e(GB_BRAND_NAME) . '</title>'
          . '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
          . '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,500..800&family=IBM+Plex+Sans:wght@400;500;600&display=swap">'
+         . '<link rel="icon" href="favicon.svg" type="image/svg+xml">'
          . '<link rel="stylesheet" href="style.css?v=' . (int)@filemtime(__DIR__ . '/style.css') . '">'
          . '</head><body' . ($bodyClass !== '' ? ' class="' . e($bodyClass) . '"' : '') . '>';
 }
@@ -262,7 +271,7 @@ function gb_public_open(string $title, string $lede, int $step): string {
     }
     return gb_head($title)
          . '<header class="masthead"><div class="wrap">'
-         . '<div class="topbar"><a class="brand" href="advertise.php">' . gb_brand_mark() . e(GB_BRAND_NAME) . '</a>'
+         . '<div class="topbar"><a class="brand" href="advertise.php" aria-label="' . e(GB_BRAND_NAME) . ' home">' . gb_brand_mark() . gb_wordmark() . '</a>'
          . '<a class="help" href="mailto:' . e(GB_ADMIN_EMAIL) . '">Questions? Contact our ad team</a></div>'
          . '<div class="intro"><h1>' . e($title) . '</h1><p class="lede">' . e($lede) . '</p></div>'
          . '<ol class="steps" aria-label="Order progress">' . $li . '</ol>'
@@ -584,9 +593,9 @@ $files['embed.js.php'] = <<<'EMBED_FILE'
    Paste these two snippets into any page:
 
      <div data-gb-spot="leaderboard"></div>
-     <script src="https://ads.example.com/embed.js.php" async></script>
+     <script src="https://bannerpromote.com/embed.js.php" async></script>
 
-   Replace ads.example.com with your GB_BASE_URL. You can place
+   (Uses GB_BASE_URL from config.php.) You can place
    multiple <div data-gb-spot="..."> per page (one per slot).
    ================================================================ */
 
@@ -664,7 +673,9 @@ code { font: 13px/1.5 ui-monospace, "SF Mono", Consolas, monospace; background: 
 /* ---------- brand ---------- */
 .brand { display: inline-flex; align-items: center; gap: 10px; color: inherit; text-decoration: none;
   font: 700 17px/1 var(--font-display); font-stretch: 112%; letter-spacing: -0.01em; }
-.brand svg { width: 26px; height: 26px; color: var(--brand); flex: none; }
+.brand svg { width: 28px; height: 28px; color: var(--brand); flex: none; }
+.wordmark { font-weight: 400; letter-spacing: -0.015em; }
+.wordmark b { font-weight: 780; }
 .brand small { display: block; font: 400 12px/1.2 var(--font-body); letter-spacing: 0; opacity: .7; margin-top: 3px; }
 
 /* ---------- public masthead ---------- */
@@ -928,6 +939,100 @@ body.login { min-height: 100vh; display: grid; place-items: center; padding: 24p
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
 STYLE_FILE;
 
+$files['setup.php'] = <<<'SETUP_FILE'
+<?php
+declare(strict_types=1);
+require __DIR__ . '/config.php';
+gb_session();
+
+/* ================================================================
+   Browser-based database setup, for hosts without a command line
+   (SFTP-only). Open https://your-site/setup.php after uploading.
+
+   - Creates only the tables that are missing.
+   - Adds the 8 starter placements only if there are no placements.
+   - Never changes or deletes existing banners, orders or stats,
+     so it is safe to open again later (e.g. after an update).
+   - Requires the admin password from config.php.
+   Delete this file from the server once your site is running.
+   ================================================================ */
+
+$tables = ['gb_spots', 'gb_banners', 'gb_orders', 'gb_stats'];
+$errors = []; $done = [];
+
+$exists = function (string $t): bool {
+    try { gb_db()->query("SELECT 1 FROM `$t` LIMIT 1"); return true; }
+    catch (PDOException $ex) { return false; }
+};
+
+if (GB_ADMIN_PASSWORD === 'CHANGE-ME-NOW' || strlen(GB_ADMIN_PASSWORD) < 10) {
+    $errors[] = 'Set a strong GB_ADMIN_PASSWORD (10+ characters) in config.php and upload it again, then reload this page.';
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!gb_csrf_ok()) {
+        $errors[] = 'This page expired. Enter the password again.';
+    } elseif (!hash_equals(GB_ADMIN_PASSWORD, is_string($_POST['password'] ?? null) ? $_POST['password'] : '')) {
+        usleep(500000);
+        $errors[] = 'That password is not correct. Use GB_ADMIN_PASSWORD from config.php.';
+    } else {
+        try {
+            $db = gb_db();
+            $sql = preg_replace('/^\s*--.*$/m', '', (string)file_get_contents(__DIR__ . '/schema.sql'));
+            $before = array_filter($tables, $exists);
+            foreach (array_filter(array_map('trim', explode(';', $sql))) as $stmt) {
+                // Only create tables that are missing; existing ones are never touched.
+                if (preg_match('/^CREATE TABLE IF NOT EXISTS (\w+)/i', $stmt, $m) && !in_array($m[1], $before, true))
+                    $db->exec($stmt);
+            }
+            foreach ($tables as $t)
+                $done[] = in_array($t, $before, true) ? "Table $t already existed, kept as is." : "Created table $t.";
+
+            // Upgrade older installs: allow manual ("Mark paid") orders.
+            if ($db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql')
+                $db->exec("ALTER TABLE gb_orders MODIFY gateway ENUM('paypal','stripe','manual') NOT NULL");
+
+            if ((int)$db->query('SELECT COUNT(*) FROM gb_spots')->fetchColumn() === 0) {
+                foreach (array_filter(array_map('trim', explode(';', $sql))) as $stmt)
+                    if (stripos($stmt, 'INSERT') === 0) $db->exec($stmt);
+                $done[] = 'Added the 8 starter placements ($10 for 30 days each).';
+            } else {
+                $done[] = 'Placements already exist, kept as is ('
+                        . (int)$db->query('SELECT COUNT(*) FROM gb_spots')->fetchColumn() . ').';
+            }
+            $done[] = 'Existing banners kept: ' . (int)$db->query('SELECT COUNT(*) FROM gb_banners')->fetchColumn() . '.';
+            if (!is_dir(GB_UPLOAD_DIR)) @mkdir(GB_UPLOAD_DIR, 0755, true);
+            if (is_dir(GB_UPLOAD_DIR)) gb_protect_uploads(GB_UPLOAD_DIR);
+            $done[] = is_writable(GB_UPLOAD_DIR)
+                ? 'The uploads folder is ready.'
+                : 'Warning: the uploads folder is not writable. Set its permissions to 755 (or 775) in your file manager.';
+        } catch (PDOException $ex) {
+            $errors[] = 'Could not use the database: ' . $ex->getMessage()
+                      . '. Check GB_DB_HOST, GB_DB_NAME, GB_DB_USER and GB_DB_PASS in config.php.';
+        }
+    }
+}
+
+echo gb_head('Set up', 'login') . '<main class="login-card" style="max-width:520px">'
+   . '<a class="brand" href="advertise.php">' . gb_brand_mark() . '<span>' . gb_wordmark() . '<small>Site setup</small></span></a>'
+   . '<h1>Set up the database</h1>';
+foreach ($errors as $er) echo '<div class="alert alert-error" role="alert">' . e($er) . '</div>';
+if ($done) {
+    echo '<div class="alert alert-success" role="status"><strong>Setup complete.</strong><ul>';
+    foreach ($done as $d) echo '<li>' . e($d) . '</li>';
+    echo '</ul></div><p>Next: <a href="admin.php">open the admin console</a>. '
+       . 'For safety, delete <code>setup.php</code> from the server now that the site is running.</p>';
+} elseif (GB_ADMIN_PASSWORD !== 'CHANGE-ME-NOW' && strlen(GB_ADMIN_PASSWORD) >= 10) {
+    echo '<p class="muted">Creates any missing tables. Existing banners, orders and statistics are never changed.</p>'
+       . '<form method="post">' . gb_csrf_field()
+       . '<label class="field"><span>Admin password</span><input type="password" name="password" required autofocus autocomplete="current-password"></label>'
+       . '<button class="btn btn-primary btn-block btn-lg" type="submit">Run setup</button></form>';
+}
+echo '</main></body></html>';
+SETUP_FILE;
+
+$files['favicon.svg'] = <<<'FAVICON_FILE'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><rect width="28" height="28" rx="6" fill="#0B6E4F"/><path d="M6 8.5h11.5L23 14l-5.5 5.5H6l3.2-5.5z" fill="#fff"/></svg>
+FAVICON_FILE;
+
 $files['advertise.php'] = <<<'ADVERTISE_FILE'
 <?php
 declare(strict_types=1);
@@ -1116,7 +1221,7 @@ echo gb_public_open('Review your order',
     <div class="panel-head"><div><h2>Preview</h2>
       <p>Shown in a sample page. Views and clicks here are not counted.</p></div></div>
     <div class="browser">
-      <div class="browser-bar"><i></i><i></i><i></i><span class="browser-url"><?= e(parse_url(GB_BASE_URL, PHP_URL_HOST) ?: 'example.com') ?></span></div>
+      <div class="browser-bar"><i></i><i></i><i></i><span class="browser-url"><?= e(parse_url(GB_BASE_URL, PHP_URL_HOST) ?: 'yourwebsite.com') ?></span></div>
       <div class="browser-body" aria-hidden="true">
         <div class="ph title"></div><div class="ph"></div><div class="ph"></div><div class="ph short"></div>
         <div class="banner-slot"><?= gb_banner_html($b) ?></div>
@@ -1362,7 +1467,7 @@ if (empty($_SESSION['gb_admin'])) {
     }
     echo gb_head('Admin login', 'login')
        . '<main class="login-card"><a class="brand" href="advertise.php">' . gb_brand_mark()
-       . '<span>' . e(GB_BRAND_NAME) . '<small>Publisher console</small></span></a>'
+       . '<span>' . gb_wordmark() . '<small>Publisher console</small></span></a>'
        . '<h1>Admin login</h1><p class="muted">Sign in to review orders and manage placements.</p>'
        . (!empty($loginError) ? '<div class="alert alert-error" role="alert">That password is not correct.</div>' : '')
        . '<form method="post"><label class="field"><span>Password</span>'
@@ -1506,7 +1611,7 @@ function gb_layout(string $title, string $active, string $body, string $intro = 
     }
     echo gb_head($title, 'console')
        . '<aside class="sidebar"><a class="brand" href="?a=dashboard">' . gb_brand_mark()
-       . '<span>' . e(GB_BRAND_NAME) . '<small>Publisher console</small></span></a>'
+       . '<span>' . gb_wordmark() . '<small>Publisher console</small></span></a>'
        . '<nav class="side-nav" aria-label="Console">' . $links . '</nav>'
        . '<div class="side-nav side-foot"><a href="advertise.php" target="_blank">' . gb_icon('external') . 'Advertiser page</a>'
        . '<a href="?a=logout">' . gb_icon('logout') . 'Log out</a></div></aside>'

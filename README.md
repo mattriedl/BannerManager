@@ -1,4 +1,4 @@
-# Banner Manager
+# BannerPromote (Banner Manager)
 
 Self-hosted PHP/MySQL banner ad manager: advertisers buy a slot, upload a
 banner and pay with PayPal or Stripe; you approve it in the admin panel; it's
@@ -125,11 +125,23 @@ existing banners and website code depend on them.
 ## Branding
 
 Set your company name with `GB_BRAND_NAME` in `config.php` (default:
-"Kestrel Media", a placeholder). All pages share one stylesheet,
+"BannerPromote"). All pages share one stylesheet,
 `style.css`; the colours are defined at the top as CSS variables
 (`--ink` navy, `--brand` emerald) if you want to match your own brand.
 
-## Deploy
+## Deploy on SFTP-only hosting (no command line)
+
+1. Run `php install.php --dir=upload` on your computer (or in a Codespace).
+2. Fill in every line marked `CHANGE` in `upload/config.php`.
+3. Upload the contents of `upload/` to your site folder with SFTP. Nothing
+   is named `index.html`, so an existing home page is left alone.
+4. Open `https://your-site/setup.php`, enter the admin password and run
+   setup. It creates only missing tables and never changes existing data.
+   Delete `setup.php` afterwards.
+
+When updating later, don't overwrite `config.php` or delete `uploads/`.
+
+## Deploy (server with a command line)
 
 ```bash
 php install.php --dir=/var/www/ads \
