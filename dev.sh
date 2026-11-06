@@ -17,8 +17,8 @@ DIR="build/dev"
 
 if [[ "${RESET:-0}" == "1" ]]; then rm -rf "$DIR"; fi
 
-php install.php --dir="$DIR" --force >/dev/null
-cp tests/config.local.php "$DIR/config.local.php"
+mkdir -p "$DIR"
+cp tests/config.local.php "$DIR/config.local.php"   # local settings (not uploaded)
 
 if [[ ! -f "$DIR/dev.sqlite" ]]; then
   php -r '$p = new PDO("sqlite:" . $argv[1]); $p->exec(file_get_contents($argv[2]));' \
@@ -44,6 +44,8 @@ BASE_URL="${BASE_URL:-http://127.0.0.1:$PORT}"
 
 export GB_TEST_BASE_URL="$BASE_URL"
 export GB_TEST_SQLITE_FILE="$PWD/$DIR/dev.sqlite"
+php install.php --dir="$DIR" --force >/dev/null
+php tools/build-blog.php --site="$DIR" >/dev/null || { echo "Blog build failed (see errors above)"; exit 1; }
 
 cat <<EOF
 

@@ -67,6 +67,9 @@ jobs:
         run: |
           # Sitemap <lastmod> = date of the latest commit (accurate dates help Google and Bing).
           php install.php --dir=build/site --lastmod="$(git log -1 --format=%cs)"
+          # Blog: validates every article (fails the deploy if one breaks the SEO rules),
+          # writes blog pages, RSS feed and adds articles to sitemap.xml.
+          php tools/build-blog.php --site=build/site
           rm -f build/site/config.php            # never overwrite the live config
           rm -rf build/site/uploads              # never touch uploaded banners
           if [ "$INCLUDE_SETUP" != "true" ]; then rm -f build/site/setup.php build/site/import.php; fi
@@ -166,7 +169,7 @@ jobs:
         if: env.DRY_RUN != 'true'
         run: |
           bad=""
-          for page in "" advertise.php pricing.php banner-ad-sizes.php how-to-buy-banner-ads.php faq.php privacy.php terms.php \
+          for page in "" advertise.php pricing.php banner-ad-sizes.php how-to-buy-banner-ads.php faq.php privacy.php terms.php blog/ blog/feed.xml \
                       admin.php embed.js.php style.css favicon.svg robots.txt sitemap.xml og-image.png; do
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/$page" || echo 000)
             echo "$SITE_URL/$page -> HTTP $code"
@@ -177,6 +180,7 @@ jobs:
           curl -s --max-time 20 "$SITE_URL/embed.js.php" | grep -q '&site=' || bad="$bad embed.js.php(old version)"
           curl -s --max-time 20 "$SITE_URL/" | grep -q 'rel="canonical"' || bad="$bad home-page(old version)"
           curl -s --max-time 20 "$SITE_URL/sitemap.xml" | grep -q '<urlset' || bad="$bad sitemap.xml(invalid)"
+          curl -s --max-time 20 "$SITE_URL/blog/" | grep -q 'post-card' || bad="$bad blog(no articles)"
           curl -s --max-time 20 "$SITE_URL/" | grep -q 'googletagmanager.com/gtm.js' || bad="$bad home-page(no Tag Manager)"
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/fonts/archivo.woff2"); [ "$code" = 200 ] || bad="$bad fonts($code)"
           j=$(curl -s --max-time 20 "$SITE_URL/serve.php?spot=leaderboard&site=deploy-check.invalid")

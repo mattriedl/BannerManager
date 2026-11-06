@@ -256,7 +256,13 @@ function gb_url(string $path = '/'): string {
     return rtrim(GB_BASE_URL, '/') . '/' . ltrim($path, '/');
 }
 
-/** Public pages search engines may index, in menu/sitemap order: path => [menu label, lastmod key]. */
+/** Root-relative link for a site path ("/pricing.php"), so links work from any folder (e.g. /blog/). */
+function gb_path(string $path = '/'): string {
+    $base = rtrim((string)(parse_url(GB_BASE_URL, PHP_URL_PATH) ?? ''), '/');
+    return $base . '/' . ltrim($path, '/');
+}
+
+/** Public pages search engines may index, in menu/sitemap order: path => menu label. */
 function gb_public_pages(): array {
     return [
         '/'                          => 'Home',
@@ -265,6 +271,7 @@ function gb_public_pages(): array {
         '/banner-ad-sizes.php'       => 'Banner ad sizes',
         '/how-to-buy-banner-ads.php' => 'How it works',
         '/faq.php'                   => 'FAQ',
+        '/blog/'                     => 'Blog',
     ];
 }
 
@@ -308,7 +315,7 @@ function gb_consent_banner(): string {
     return '<div class="consent" id="consent" role="dialog" aria-modal="false" aria-labelledby="consent-title" hidden>'
          . '<p class="consent-title" id="consent-title">Analytics cookies</p>'
          . '<p>We use Google Analytics to see which pages are useful and improve the site. It sets cookies only if you allow it. '
-         . '<a href="privacy.php">Privacy Policy</a></p>'
+         . '<a href="' . e(gb_path('/privacy.php')) . '">Privacy Policy</a></p>'
          . '<div class="consent-actions"><button type="button" class="btn btn-primary btn-sm" data-consent="granted">Accept</button>'
          . '<button type="button" class="btn btn-secondary btn-sm" data-consent="denied">Decline</button></div></div>'
          . '<script>(function(){var b=document.getElementById("consent"),c=window.bpConsent;if(!b||!c)return;'
@@ -364,30 +371,31 @@ function gb_head(string $title, string $bodyClass = '', array $meta = []): strin
             . '</script>';
     }
     return $h
-       . '<link rel="preload" href="fonts/ibm-plex-sans.woff2" as="font" type="font/woff2" crossorigin>'
-       . '<link rel="preload" href="fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>'
-       . '<link rel="icon" href="favicon.svg" type="image/svg+xml">'
-       . '<link rel="stylesheet" href="style.css?v=' . (int)@filemtime(__DIR__ . '/style.css') . '">'
+       . '<link rel="preload" href="' . gb_path('/fonts/ibm-plex-sans.woff2') . '" as="font" type="font/woff2" crossorigin>'
+       . '<link rel="preload" href="' . gb_path('/fonts/archivo.woff2') . '" as="font" type="font/woff2" crossorigin>'
+       . '<link rel="icon" href="' . gb_path('/favicon.svg') . '" type="image/svg+xml">'
+       . '<link rel="stylesheet" href="' . gb_path('/style.css') . '?v=' . (int)@filemtime(__DIR__ . '/style.css') . '">'
+       . ($meta['extra_head'] ?? '')
        . '</head><body' . ($bodyClass !== '' ? ' class="' . e($bodyClass) . '"' : '') . '>';
 }
 
-/** BreadcrumbList schema for a page one level below Home. */
-function gb_breadcrumb(string $name, string $path): array {
-    return ['@type' => 'BreadcrumbList', 'itemListElement' => [
-        ['@type' => 'ListItem', 'position' => 1, 'name' => 'Home', 'item' => gb_url('/')],
-        ['@type' => 'ListItem', 'position' => 2, 'name' => $name, 'item' => gb_url($path)],
-    ]];
+/** BreadcrumbList schema: Home > [parents...] > this page. $parents as [label => path]. */
+function gb_breadcrumb(string $name, string $path, array $parents = []): array {
+    $items = [['@type' => 'ListItem', 'position' => 1, 'name' => 'Home', 'item' => gb_url('/')]];
+    foreach ($parents as $label => $p) $items[] = ['@type' => 'ListItem', 'position' => count($items) + 1, 'name' => $label, 'item' => gb_url($p)];
+    $items[] = ['@type' => 'ListItem', 'position' => count($items) + 1, 'name' => $name, 'item' => gb_url($path)];
+    return ['@type' => 'BreadcrumbList', 'itemListElement' => $items];
 }
 
 /** Top bar with the logo and the site menu. $active is the current page path. */
 function gb_topbar(string $active = ''): string {
     $links = '';
     foreach (['/pricing.php' => 'Pricing', '/banner-ad-sizes.php' => 'Banner sizes',
-              '/how-to-buy-banner-ads.php' => 'How it works', '/faq.php' => 'FAQ'] as $path => $label)
-        $links .= '<a href="' . e(ltrim($path, '/')) . '"' . ($path === $active ? ' aria-current="page"' : '') . '>' . $label . '</a>';
-    return '<div class="topbar"><a class="brand" href="./" aria-label="' . e(GB_BRAND_NAME) . ' home">' . gb_brand_mark() . gb_wordmark() . '</a>'
+              '/how-to-buy-banner-ads.php' => 'How it works', '/faq.php' => 'FAQ', '/blog/' => 'Blog'] as $path => $label)
+        $links .= '<a href="' . e(gb_path($path)) . '"' . ($path === $active || ($path === '/blog/' && str_starts_with($active, '/blog/')) ? ' aria-current="page"' : '') . '>' . $label . '</a>';
+    return '<div class="topbar"><a class="brand" href="' . e(gb_path('/')) . '" aria-label="' . e(GB_BRAND_NAME) . ' home">' . gb_brand_mark() . gb_wordmark() . '</a>'
          . '<nav class="site-nav" aria-label="Main">' . $links
-         . '<a class="btn btn-primary btn-sm nav-cta" href="advertise.php"' . ($active === '/advertise.php' ? ' aria-current="page"' : '') . '>Buy a banner ad</a></nav></div>';
+         . '<a class="btn btn-primary btn-sm nav-cta" href="' . e(gb_path('/advertise.php')) . '"' . ($active === '/advertise.php' ? ' aria-current="page"' : '') . '>Buy a banner ad</a></nav></div>';
 }
 
 /**
@@ -409,26 +417,31 @@ function gb_public_open(string $title, string $lede, int $step, array $meta = []
          . '</div></header><main class="page"><div class="wrap">';
 }
 
-/** Content page top (pricing, guides, FAQ): masthead with menu, breadcrumb, H1 and intro. */
-function gb_site_open(string $h1, string $lede, array $meta, string $crumb = ''): string {
+/**
+ * Content page top (pricing, guides, FAQ, blog): masthead with menu, breadcrumb, H1 and intro.
+ * $parents: extra breadcrumb levels between Home and this page, as [label => path].
+ */
+function gb_site_open(string $h1, string $lede, array $meta, string $crumb = '', array $parents = [], string $afterLede = ''): string {
+    $trail = '<a href="' . e(gb_path('/')) . '">Home</a>';
+    foreach ($parents as $label => $path) $trail .= '<span aria-hidden="true">/</span><a href="' . e(gb_path($path)) . '">' . e($label) . '</a>';
     return gb_head($h1, '', $meta + ['index' => true])
          . '<header class="masthead"><div class="wrap">' . gb_topbar($meta['path'] ?? '')
          . '<div class="intro">'
-         . ($crumb !== '' ? '<nav class="crumbs" aria-label="Breadcrumb"><a href="./">Home</a><span aria-hidden="true">/</span><span>' . e($crumb) . '</span></nav>' : '')
-         . '<h1>' . e($h1) . '</h1><p class="lede">' . e($lede) . '</p></div>'
+         . ($crumb !== '' ? '<nav class="crumbs" aria-label="Breadcrumb">' . $trail . '<span aria-hidden="true">/</span><span aria-current="page">' . e($crumb) . '</span></nav>' : '')
+         . '<h1>' . e($h1) . '</h1><p class="lede">' . e($lede) . '</p>' . $afterLede . '</div>'
          . '</div></header><main class="page"><div class="wrap">';
 }
 
 function gb_public_close(): string {
     $links = '';
     foreach (gb_public_pages() as $path => $label)
-        $links .= '<li><a href="' . e($path === '/' ? './' : ltrim($path, '/')) . '">' . e($label) . '</a></li>';
+        $links .= '<li><a href="' . e(gb_path($path)) . '">' . e($label) . '</a></li>';
     return '</div></main><footer class="site-foot"><div class="wrap">'
-         . '<div class="foot-brand"><a class="brand" href="./">' . gb_brand_mark() . gb_wordmark() . '</a>'
+         . '<div class="foot-brand"><a class="brand" href="' . e(gb_path('/')) . '">' . gb_brand_mark() . gb_wordmark() . '</a>'
          . '<p>Self-serve banner advertising: pick an ad size, upload your banner and run it for 30 days.</p></div>'
          . '<nav aria-label="Site"><ul class="foot-links">' . $links
          . '<li><a href="mailto:' . e(GB_ADMIN_EMAIL) . '">Contact us</a></li>'
-         . '<li><a href="privacy.php">Privacy Policy</a></li><li><a href="terms.php">Terms of Service</a></li>'
+         . '<li><a href="' . e(gb_path('/privacy.php')) . '">Privacy Policy</a></li><li><a href="' . e(gb_path('/terms.php')) . '">Terms of Service</a></li>'
          . (gb_consent_banner() !== '' ? '<li><a href="#" data-cookie-settings>Cookie settings</a></li>' : '')
          . '</ul></nav>'
          . '<p class="foot-legal">&copy; ' . date('Y') . ' ' . e(GB_BRAND_NAME) . '. All advertising is reviewed before publication. '
@@ -439,11 +452,12 @@ function gb_public_close(): string {
 /** A call-to-action band used at the end of content pages. */
 function gb_cta(string $heading = 'Ready to run your banner?', string $text = 'Choose an ad size, upload your image and check out in a few minutes.'): string {
     return '<section class="cta-band"><div><h2>' . e($heading) . '</h2><p>' . e($text) . '</p></div>'
-         . '<a class="btn btn-primary btn-lg" href="advertise.php">Buy a banner ad</a></section>';
+         . '<a class="btn btn-primary btn-lg" href="' . e(gb_path('/advertise.php')) . '">Buy a banner ad</a></section>';
 }
 
 /** Current Terms of Service version (its effective date). Orders record which version was accepted. */
-if (!defined('GB_TOS_VERSION'))  define('GB_TOS_VERSION', '2026-11-06');
+if (!defined('GB_TOS_VERSION'))  define('GB_TOS_VERSION', '2026-11-06.2');   // bump when the Terms change
+if (!defined('GB_TOS_EFFECTIVE')) define('GB_TOS_EFFECTIVE', '2026-11-06');  // date the current version took effect
 if (!defined('GB_PRIVACY_DATE')) define('GB_PRIVACY_DATE', '2026-11-06');
 
 /**
@@ -1235,6 +1249,36 @@ body.login { min-height: 100vh; display: grid; place-items: center; padding: 24p
 .agree:has(input:checked) { border-color: var(--brand); background: #F7FBF9; }
 .consent p a { color: var(--brand); }
 
+/* ---------- blog ---------- */
+.post-byline { color: #8F9AB3; font-size: 14px; margin: 14px 0 0; }
+.post-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 28px; align-items: start; }
+.post-body h2 { scroll-margin-top: 20px; }
+.post-body blockquote { margin: 18px 0; padding: 4px 18px; border-left: 3px solid var(--brand); color: var(--ink); }
+.post-body table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 15px; display: block; overflow-x: auto; }
+.post-body th, .post-body td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+.post-body th { background: #FAFBFC; color: var(--ink); }
+.post-body .faq { margin-top: 8px; }
+.post-body .key-takeaways { background: var(--brand-tint); border-radius: var(--r-md); padding: 6px 22px 4px; margin: 4px 0 22px; }
+.post-body .key-takeaways h2 { font-size: 18px; margin-top: 16px; }
+.post-aside { position: sticky; top: 20px; }
+.post-toc { background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-md); padding: 18px 20px; }
+.post-toc-title { font: 700 14px/1.3 var(--font-display); color: var(--ink); margin-bottom: 8px; }
+.post-toc ol { margin: 0; padding-left: 18px; font-size: 14px; }
+.post-toc li { margin-bottom: 6px; }
+.post-toc a { color: var(--ink-2); text-decoration: none; }
+.post-toc a:hover { color: var(--brand); text-decoration: underline; }
+.post-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.post-card { display: flex; flex-direction: column; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: 22px; color: inherit; text-decoration: none; }
+.post-card:hover { border-color: var(--brand); }
+.post-card strong { font: 700 19px/1.3 var(--font-display); color: var(--ink); }
+.post-cat { font-size: 13px; font-weight: 600; color: var(--brand); }
+.post-excerpt { color: var(--ink-2); font-size: 14.5px; }
+.post-meta { color: var(--muted); font-size: 13px; margin-top: auto; }
+.related { margin-top: 32px; }
+.related h2 { font-size: 24px; margin-bottom: 14px; }
+@media (max-width: 920px) { .post-layout { grid-template-columns: minmax(0, 1fr); } .post-aside { position: static; order: -1; } }
+
 /* ---------- cookie popup ---------- */
 .consent { position: fixed; left: 16px; bottom: 16px; z-index: 50; max-width: 400px; background: var(--paper);
   border: 1px solid var(--line); border-radius: var(--r-md); padding: 18px 20px; box-shadow: 0 8px 30px rgba(20,33,61,.18); }
@@ -1625,6 +1669,20 @@ echo gb_head('Home', 'home', [
     </div>
   </section>
 
+  <section class="home-section" aria-labelledby="small-business">
+    <div class="section-head"><h2 id="small-business">Affordable website advertising for small businesses</h2></div>
+    <div class="article prose">
+      <p>Advertising on websites used to mean minimum spends, ad networks and bidding wars. <?= e(GB_BRAND_NAME) ?> keeps it simple:
+        cheap banner advertising at one flat price, so a local shop, a startup or a freelancer can run display ads next to the content
+        their customers already read. Choose the size, upload your banner, and your ad rotates in that placement for the whole run.</p>
+      <p>It is a low-risk way to test a new offer, promote a sale or event, or keep your name in front of potential customers.
+        Compare the options in <a href="/blog/banner-ads-vs-google-ads.html">banner ads vs Google Ads</a>, or see what makes a
+        <a href="/blog/banner-ad-click-through-rate.html">good banner ad click-through rate</a>.</p>
+    </div>
+  </section>
+
+  <!--LATEST_POSTS-->
+
   <section class="home-section" aria-labelledby="faq">
     <div class="section-head"><h2 id="faq">Banner advertising questions</h2>
       <p>Quick answers. See all <a href="faq.php">frequently asked questions</a>.</p></div>
@@ -1710,6 +1768,11 @@ echo gb_site_open('Banner ad pricing', 'Simple, flat-rate banner advertising: on
     <li>Click-through links that send visitors straight to the page you choose.</li>
   </ul>
 
+  <h2>How much does it cost to advertise on a website?</h2>
+  <p>It depends on how the ad is sold. Large publishers and ad networks often charge by the thousand impressions or by the click, with
+    prices set by auction, so a month of website advertising can cost anything from a few dollars to thousands. With <?= e(GB_BRAND_NAME) ?>,
+    the banner ad cost per month is simply the placement price: <?= e($pitch) ?>, with nothing else to pay.</p>
+
   <h2>How banner ads are usually priced</h2>
   <p>Most ad networks sell banner ads in one of three ways. With <strong>CPM</strong> (cost per thousand impressions) you pay for every thousand times your ad is shown.
     With <strong>CPC</strong> (cost per click) you pay each time someone clicks. Both usually involve bidding against other advertisers, so the final cost of a campaign is hard to predict.</p>
@@ -1778,7 +1841,8 @@ echo gb_site_open('Banner ad sizes: the standard sizes and when to use each',
 
 <article class="article prose">
   <h2>The sizes in detail</h2>
-  <p>Display ad sizes are measured in pixels, width × height. The sizes below are the ones you will find on most websites and in most ad networks, so a banner made for one site usually works on many others.</p>
+  <p>Display ad sizes are measured in pixels, width × height. The web banner dimensions below are the standard IAB ad sizes you will find on most
+    websites and in most ad networks, including Google's display network, so a banner made for one site usually works on many others.</p>
   <ul class="toc" aria-label="Jump to a size">
     <?php foreach ($guide as $slug => $z): ?><li><a href="#<?= e($slug) ?>"><?= $z[1] ?>×<?= $z[2] ?> <?= e($z[0]) ?></a></li><?php endforeach; ?>
   </ul>
@@ -1876,6 +1940,12 @@ echo gb_site_open('How to buy banner ads: a step-by-step guide',
         each week; if one message or size performs better, use it for your next run.</p></div></li>
   </ol>
 
+  <h2>How to advertise on other websites</h2>
+  <p>You have three main options. You can contact a website owner directly and negotiate a deal, which takes time and usually has a minimum.
+    You can use a large ad network, which reaches many sites but involves bidding, targeting settings and ongoing management. Or you can use a
+    self-serve service like <?= e(GB_BRAND_NAME) ?>, where you choose a placement, pay a flat price and upload your banner. For most small
+    businesses starting out, self-serve banner advertising is the quickest way to get an ad live on relevant websites.</p>
+
   <h2 id="mistakes">Common banner ad mistakes to avoid</h2>
   <ul>
     <li><strong>Too much text.</strong> If it takes more than a glance to read, most people won't.</li>
@@ -1928,7 +1998,7 @@ $groups = [
         ['How long does a banner ad run?', 'Each run lasts ' . $runDays . ' days. The run starts when our team approves your banner, not when you pay.'],
         ['How quickly will my ad go live?', 'Every banner is reviewed by our team, usually within one business day. You get an e-mail when it is live.'],
         ['Where will my banner appear?', 'In the ad space you choose on the websites that show ' . GB_BRAND_NAME . ' ads. Your banner rotates with other banners of the same size, and it is never shown on your own website.'],
-        ['Can an ad be declined?', 'Yes. We review every banner and landing page and may decline ads that are misleading, unsafe or don\'t link to a working page. Contact us if your ad was declined.'],
+        ['Can an ad be declined?', 'Yes. We review every banner and landing page and decline ads that break our Terms of Service, such as misleading, adult or illegal content. If we decline an ad you have paid for, we e-mail you once, at the address you ordered with, to ask for a new link and/or banner. If you don\'t send a valid replacement within 5 business days, the order is terminated with no refund.'],
         ['How do I track clicks from my banner?', 'Add UTM tags to the link you enter, such as ?utm_source=bannerpromote&utm_medium=banner. Your analytics tool will then show the visits your banner sends.'],
         ['Can I change my banner after ordering?', 'Contact us with your order number and the new image, and we will help you update it.'],
     ],
@@ -1974,12 +2044,12 @@ echo gb_site_open('Terms of Service', 'The rules for advertising with ' . GB_BRA
     'path'        => '/terms.php',
     'title_full'  => 'Terms of Service for Banner Advertisers | ' . GB_BRAND_NAME,
     'description' => 'The rules every ' . GB_BRAND_NAME . ' advertiser agrees to: no fraud, no adult content, nothing illegal '
-                   . 'and no redirecting your link. Broken rules mean removal with no refund.',
+                   . 'and no link redirects. Breaking them means removal, no refund.',
     'jsonld'      => [gb_breadcrumb('Terms of Service', '/terms.php')],
 ], 'Terms of Service');
 ?>
 <article class="article prose legal">
-  <p class="muted">Version <?= e(GB_TOS_VERSION) ?>. Effective <?= e(date('F j, Y', strtotime(GB_TOS_VERSION))) ?>.</p>
+  <p class="muted">Version <?= e(GB_TOS_VERSION) ?>. Effective <?= e(date('F j, Y', strtotime(GB_TOS_EFFECTIVE))) ?>.</p>
 
   <p>These terms apply to everyone who buys banner advertising from <?= e(GB_BRAND_NAME) ?> ("we", "us").
     By ticking "I agree to the Terms of Service" and submitting an order, you ("the advertiser") accept them in full.
@@ -2009,8 +2079,18 @@ echo gb_site_open('Terms of Service', 'The rules for advertising with ' . GB_BRA
   <p>We review every banner and landing page before it goes live and may check them at any time while it runs.
     We may decline any ad that we believe breaks these terms or is unsuitable for the websites that show our ads.</p>
 
+  <h2>5. Ads declined at review</h2>
+  <p>If we decline your ad after you have paid because your banner, or the content your link leads to, is not appropriate or does not meet these terms:</p>
+  <ul>
+    <li>we will contact you by e-mail, at the e-mail address you gave when you submitted your ad and paid;</li>
+    <li>in that e-mail we will make <strong>one request</strong> for a new link and/or banner, and set out these terms again; and</li>
+    <li>you must reply with a valid link and/or banner that meets these terms <strong>within 5 business days</strong> of our e-mail.</li>
+  </ul>
+  <p>If you do not provide a valid link and/or banner that meets these terms after that one request, or you do not reply within
+    5 business days, <strong>your order is terminated with no refund</strong>. We do not make a second request.</p>
+
   <div class="rule-box" role="note">
-    <h2>5. Breaking the rules</h2>
+    <h2>6. Breaking the rules</h2>
     <p>If any of these rules is broken, at any time and in any way:</p>
     <ul>
       <li>your banner ad is <strong>terminated immediately</strong>, without notice;</li>
@@ -2020,21 +2100,22 @@ echo gb_site_open('Terms of Service', 'The rules for advertising with ' . GB_BRA
     <p><strong>No exceptions. Breaking the rules of any kind will not be tolerated.</strong></p>
   </div>
 
-  <h2>6. Payment and refunds</h2>
+  <h2>7. Payment and refunds</h2>
   <p>You pay the full price of the run when you order. Your run starts when your ad is approved and lasts for the period shown for your placement.
-    Refunds are given only at our discretion, and never when an ad is removed for breaking these terms.</p>
+    Refunds are given only at our discretion, and never when an ad is removed for breaking these terms
+    or an order is terminated under section 5.</p>
 
-  <h2>7. No guaranteed results</h2>
+  <h2>8. No guaranteed results</h2>
   <p>Your banner is shown in rotation with other banners of the same size. We do not guarantee a number of views, clicks, sales or any other result.</p>
 
-  <h2>8. Your responsibility</h2>
+  <h2>9. Your responsibility</h2>
   <p>You are responsible for your banner, your link and your website, and for having the rights to everything in your ad.
     You agree to cover any claims, losses or costs that arise because your ad or website broke these terms or the law.</p>
 
-  <h2>9. Changes</h2>
+  <h2>10. Changes</h2>
   <p>We may update these terms. The version you agreed to applies to your order; new orders use the version in force when they are placed.</p>
 
-  <h2>10. Contact</h2>
+  <h2>11. Contact</h2>
   <p>Questions about these terms: <a href="mailto:<?= e(GB_ADMIN_EMAIL) ?>"><?= e(GB_ADMIN_EMAIL) ?></a>.
     See also our <a href="privacy.php">Privacy Policy</a>.</p>
 </article>
@@ -2051,7 +2132,7 @@ require __DIR__ . '/config.php';
 echo gb_site_open('Privacy Policy', 'What information ' . GB_BRAND_NAME . ' collects, why, who it is shared with, and the choices you have.', [
     'path'        => '/privacy.php',
     'title_full'  => 'Privacy Policy | ' . GB_BRAND_NAME,
-    'description' => 'How ' . GB_BRAND_NAME . ' handles advertiser and visitor information: order details, payments via Stripe and PayPal, '
+    'description' => 'How ' . GB_BRAND_NAME . ' handles advertiser and visitor data: order details, Stripe and PayPal payments, '
                    . 'analytics cookies with consent, and your privacy rights.',
     'jsonld'      => [gb_breadcrumb('Privacy Policy', '/privacy.php')],
 ], 'Privacy Policy');
@@ -2330,14 +2411,15 @@ echo gb_public_open('Buy a banner ad', 'Choose an ad size, upload your banner an
 </form>
 
 <section class="panel prose" aria-labelledby="why">
-  <h2 id="why">Banner advertising without the hassle</h2>
+  <h2 id="why">Buy banner ads online without the hassle</h2>
   <div class="feature-grid">
     <div><h3>One flat price</h3><p>Each placement has a fixed price for a fixed run, shown above. No bidding, no minimum spend and no contract.</p></div>
     <div><h3>Every standard size</h3><p>From the 728×90 leaderboard to the 300×250 medium rectangle and 320×50 mobile banner. See the <a href="banner-ad-sizes.php">banner ad size guide</a>.</p></div>
     <div><h3>Reviewed by a person</h3><p>We check each banner and landing page before it runs, so ads stay clean and relevant.</p></div>
     <div><h3>Pay how you like</h3><p>Pay by card through Stripe or with PayPal. Your run starts when your banner is approved.</p></div>
   </div>
-  <p class="muted small">New to banner ads? Read <a href="how-to-buy-banner-ads.php">how to buy banner ads</a>, compare <a href="pricing.php">banner ad pricing</a> or check the <a href="faq.php">FAQ</a>.</p>
+  <p class="muted small">New to banner ads? Read <a href="how-to-buy-banner-ads.php">how to buy banner ads</a>, compare <a href="pricing.php">banner ad pricing</a>,
+    get ideas from the <a href="/blog/">online marketing blog</a> or check the <a href="faq.php">FAQ</a>.</p>
 </section>
 
 <script>

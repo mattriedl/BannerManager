@@ -53,6 +53,8 @@ check(str_contains($sql, 'INSERT IGNORE INTO gb_spots'), 'schema import includes
 /* ---------- 2. database + server ---------- */
 section("Database ($mode) + web server");
 copy(__DIR__ . '/config.local.php', "$build/config.local.php");
+[$code, $out] = sh('GB_TEST_BASE_URL=' . escapeshellarg($base) . ' php ' . escapeshellarg("$root/tools/build-blog.php") . ' --site=' . escapeshellarg($build));
+check($code === 0 && str_contains($out, 'blog/index.html'), 'blog builds (every article passes the SEO checks)', $out);
 $envVars = [
     'GB_TEST_DB' => $mode,
     'GB_TEST_BASE_URL' => $base,
@@ -437,7 +439,7 @@ $did = (int)gb_db()->lastInsertId();
 foreach (['/advertise.php' => 'adv', "/preview.php?id=$did&sig=" . gb_sig($did) => 'adv', '/admin.php' => 'admin2',
           '/admin.php?a=dashboard' => 'admin', '/admin.php?a=spots' => 'admin', '/admin.php?a=stats' => 'admin'] as $page => $who) {
     [, , $b] = http('GET', $page, ['as' => $who]);
-    check(str_contains($b, 'href="style.css?v=') && str_contains($b, GB_BRAND_NAME), "$page uses the shared design and brand name");
+    check(str_contains($b, 'href="/style.css?v=') && str_contains($b, GB_BRAND_NAME), "$page uses the shared design and brand name");
 }
 
 section('Browser setup page (setup.php)');
@@ -561,7 +563,7 @@ check($s === 200 && str_contains($robots, "Disallow: /admin.php") && str_contain
 [$s, , $xml] = http('GET', '/sitemap.xml');
 $sx = @simplexml_load_string($xml);
 $locs = $sx ? array_map('strval', iterator_to_array($sx->url ? (function () use ($sx) { foreach ($sx->url as $u) yield (string)$u->loc; })() : [], false)) : [];
-check($s === 200 && $sx !== false && count($locs) === 6, 'sitemap.xml is valid XML with the 6 public pages', $xml);
+check($s === 200 && $sx !== false && count($locs) >= 7 && (bool)array_filter($locs, fn($l) => str_ends_with($l, '/blog/')), 'sitemap.xml is valid XML with the public pages and the blog', $xml);
 check(!array_filter($locs, fn($l) => preg_match('~admin|preview|setup|import|serve|go\.php~', $l)), 'sitemap contains no private pages');
 [$s, $hd] = http('GET', '/og-image.png');
 check($s === 200 && ($hd['content-type'] ?? '') === 'image/png' && getimagesize("$build/og-image.png")[0] === 1200, 'social sharing image (1200x630) is served');
@@ -617,8 +619,8 @@ foreach (['Fraud or deception', 'Pornography or sexually explicit material', 'An
 foreach (['We never receive or store your card number', 'Google Analytics', 'Stripe and PayPal', 'Do Not Track', 'Law enforcement'] as $item)
     check(str_contains($h, $item), "Privacy Policy covers: $item");
 [, , $h] = http('GET', '/');
-check(str_contains($h, 'href="privacy.php">Privacy Policy</a>') && str_contains($h, 'href="terms.php">Terms of Service</a>'), 'footer links to both legal pages');
-check(substr_count($h, 'href="privacy.php"') >= 2, 'cookie popup links to the Privacy Policy');
+check(str_contains($h, 'href="/privacy.php">Privacy Policy</a>') && str_contains($h, 'href="/terms.php">Terms of Service</a>'), 'footer links to both legal pages');
+check(substr_count($h, 'href="/privacy.php"') >= 2, 'cookie popup links to the Privacy Policy');
 
 // An older database (before the Terms columns) is upgraded without losing data.
 $old = new PDO('sqlite::memory:'); $old->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -633,6 +635,41 @@ if ($mode === 'mysql') {   // the live site's path: real MySQL without the colum
     check(gb_migrate(gb_db()) === true && (int)gb_db()->query('SELECT COUNT(*) FROM gb_banners')->fetchColumn() === $cnt,
           'MySQL: missing Terms columns are added back, banners kept');
 }
+
+section('Blog');
+$posts = array_map(fn($f) => preg_replace('/^\d{4}-\d{2}-\d{2}-/', '', basename($f, '.html')), glob("$root/content/blog/*.html"));
+[$s, , $idx] = http('GET', '/blog/');
+check($s === 200 && substr_count($idx, 'class="post-card"') === count($posts) && str_contains($idx, '"@type":"Blog"'), 'blog index lists every article, with Blog structured data');
+foreach (glob("$root/content/blog/*.html") as $f) {
+    preg_match('/^slug:\s*(\S+)/m', (string)file_get_contents($f), $m); $slug = $m[1];
+    [$s, , $h] = http('GET', "/blog/$slug.html");
+    $ld = preg_match('~<script type="application/ld\+json">(.+?)</script>~s', $h, $j) ? json_decode($j[1], true) : [];
+    $types = array_column($ld['@graph'] ?? [], '@type');
+    $crumb = array_values(array_filter($ld['@graph'] ?? [], fn($g) => $g['@type'] === 'BreadcrumbList'))[0] ?? [];
+    $ok = $s === 200 && in_array('BlogPosting', $types, true) && in_array('FAQPage', $types, true) && count($crumb['itemListElement'] ?? []) === 3
+        && str_contains($h, 'rel="canonical" href="' . gb_url("/blog/$slug.html") . '"') && str_contains($h, 'property="og:type" content="article"')
+        && str_contains($h, 'class="post-toc"') && substr_count($h, '<h1') === 1 && !preg_match('~<a [^>]*href="https?://(?![^"]*127\.0\.0\.1)[^"]*"(?![^>]*rel="noopener")~', $h);
+    check($ok, "/blog/$slug.html: article schema, FAQ, breadcrumb, canonical, table of contents, safe external links");
+}
+$sm = (string)file_get_contents("$build/sitemap.xml");
+check(count(array_filter($posts, fn($p) => str_contains($sm, "/blog/$p.html</loc>"))) === count($posts), 'every article is in sitemap.xml');
+$rss = @simplexml_load_string((string)file_get_contents("$build/blog/feed.xml"));
+check($rss !== false && count($rss->channel->item) === count($posts), 'RSS feed lists the articles');
+[, , $h] = http('GET', '/');
+check(str_contains($h, 'Latest from the blog') && substr_count($h, 'class="post-card"') === min(3, count($posts)), 'home page links to the latest 3 articles');
+
+$tmp = "$build/../blog-tests"; sh('rm -rf ' . escapeshellarg($tmp)); @mkdir($tmp, 0777, true);
+copy(glob("$root/content/blog/*.html")[0], "$tmp/good.html");
+file_put_contents("$tmp/bad.html", "---\ntitle: Bad post\nseo_title: Short\ndescription: Too short.\nslug: Bad Slug\ndate: 2026-13-45\nprimary_keyword: widgets\nkeywords: widgets\ncategory: Test\n---\n<h1>Nope</h1><p>lorem ipsum</p>\n");
+[$code, $out] = sh('php ' . escapeshellarg("$root/tools/build-blog.php") . ' --check-file=' . escapeshellarg("$tmp/bad.html"));
+check($code !== 0 && str_contains($out, 'seo_title must be 30-60') && str_contains($out, 'at least 1000 words') && str_contains($out, 'placeholder'),
+      'the checker refuses an article that breaks the SEO rules', $out);
+$future = preg_replace('/^date: .*/m', 'date: 2099-01-01', (string)file_get_contents("$tmp/good.html"));
+file_put_contents("$tmp/good.html", $future); @unlink("$tmp/bad.html");
+sh('rm -rf ' . escapeshellarg("$tmp/site")); sh('cp -r ' . escapeshellarg($build) . ' ' . escapeshellarg("$tmp/site"));
+[$code, $out] = sh('php ' . escapeshellarg("$root/tools/build-blog.php") . ' --site=' . escapeshellarg("$tmp/site") . ' --content=' . escapeshellarg($tmp));
+check($code === 0 && str_contains($out, '0 articles, 1 scheduled') && !glob("$tmp/site/blog/*-*.html.new"), 'future-dated articles stay hidden until their date', $out);
+sh('rm -rf ' . escapeshellarg($tmp));
 
 section('Branding');
 [, , $b] = http('GET', '/advertise.php', ['as' => 'brand']);

@@ -120,6 +120,16 @@ private ones. Each verified deploy notifies Bing through IndexNow (key file
 
 Your previous "Coming Soon" page is kept in `docs/original-coming-soon-index.html`.
 
+## Blog
+
+Articles live in `content/blog/` as `YYYY-MM-DD-slug.html` (front matter + HTML).
+`php tools/build-blog.php --site=<built site>` validates them and writes `/blog/`,
+one page per article (BlogPosting, BreadcrumbList and FAQPage schema, table of
+contents, related articles), `/blog/feed.xml`, sitemap entries and the latest three
+on the home page. Any article that breaks the SEO/quality rules stops the build, so it
+can't be deployed. See `content/blog/WRITING-GUIDE.md`. A scheduled task writes and
+publishes a new article every 3 days.
+
 ## Analytics and privacy
 
 Google Tag Manager (`GB_GTM_ID` in `config.php`, `''` turns it off) loads on
