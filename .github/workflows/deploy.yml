@@ -13,7 +13,7 @@
 #   - upload or overwrite config.php (your passwords live there)
 #   - touch the uploads/ folder (advertisers' banner images)
 #   - delete anything on the server
-#   - upload setup.php, unless you tick "Include setup.php"
+#   - upload setup.php / import.php, unless you tick "Include setup.php and import.php"
 #
 # Runs when you start it (Actions > Deploy > Run workflow). To also deploy
 # automatically after every push that passes the tests, add a repository
@@ -30,7 +30,7 @@ on:
         type: boolean
         default: true
       include_setup:
-        description: "Include setup.php (only needed for first-time database setup)"
+        description: "Include setup.php and import.php (one-time database setup / banner import tools)"
         type: boolean
         default: false
   workflow_run:
@@ -68,7 +68,7 @@ jobs:
           php install.php --dir=build/site
           rm -f build/site/config.php            # never overwrite the live config
           rm -rf build/site/uploads              # never touch uploaded banners
-          if [ "$INCLUDE_SETUP" != "true" ]; then rm -f build/site/setup.php; fi
+          if [ "$INCLUDE_SETUP" != "true" ]; then rm -f build/site/setup.php build/site/import.php; fi
           echo "Files to deploy:"; ls -la build/site
 
       - name: Install the SFTP client

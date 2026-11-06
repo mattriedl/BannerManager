@@ -1029,6 +1029,164 @@ if ($done) {
 echo '</main></body></html>';
 SETUP_FILE;
 
+$files['import.php'] = <<<'IMPORT_FILE'
+<?php
+declare(strict_types=1);
+require __DIR__ . '/config.php';
+gb_session();
+
+/* ================================================================
+   One-time import of banners exported from a test site
+   (tests/export-banners.php -> banners-export.json).
+
+   Adds the banners with their images, run dates, orders and daily
+   stats. Never changes or deletes anything already on this site,
+   and importing the same file twice adds nothing the second time.
+   Requires the admin password. Delete this file when you're done.
+   ================================================================ */
+
+$report = []; $errors = [];
+$enum = fn($v, array $ok, $def) => in_array($v, $ok, true) ? $v : $def;
+$dt   = fn($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $v) ? $v : null;
+
+if (GB_ADMIN_PASSWORD === 'CHANGE-ME-NOW' || strlen(GB_ADMIN_PASSWORD) < 10) {
+    $errors[] = 'Set a strong GB_ADMIN_PASSWORD (10+ characters) in config.php first.';
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $up = $_FILES['export'] ?? null;
+    if (!gb_csrf_ok()) {
+        $errors[] = 'This page expired. Try again.';
+    } elseif (!hash_equals(GB_ADMIN_PASSWORD, is_string($_POST['password'] ?? null) ? $_POST['password'] : '')) {
+        usleep(500000);
+        $errors[] = 'That password is not correct. Use GB_ADMIN_PASSWORD from config.php.';
+    } elseif (!$up || ($up['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        $code = $up['error'] ?? UPLOAD_ERR_NO_FILE;
+        $errors[] = in_array($code, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)
+            ? 'The file is larger than this server accepts (' . ini_get('upload_max_filesize') . '). Export fewer banners at a time with --only=ID,ID.'
+            : 'Choose the banners-export.json file to import.';
+    } else {
+        $data = json_decode((string)file_get_contents($up['tmp_name']), true);
+        if (!is_array($data) || ($data['format'] ?? '') !== 'bannerpromote-export-1') {
+            $errors[] = 'That file is not a banner export. Use the banners-export.json made by tests/export-banners.php.';
+        } else {
+            try {
+                $db = gb_db();
+                if (!is_dir(GB_UPLOAD_DIR)) @mkdir(GB_UPLOAD_DIR, 0755, true);
+                gb_protect_uploads(GB_UPLOAD_DIR);
+                $mimeExt = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/gif' => 'gif', 'image/webp' => 'webp'];
+
+                // Placements: use the live one with the same embed name; add it only if missing.
+                $spotId = [];
+                foreach ((array)($data['spots'] ?? []) as $s) {
+                    $slug = (string)($s['slug'] ?? '');
+                    if (!preg_match('/^[a-z0-9-]{1,60}$/', $slug)) continue;
+                    $q = $db->prepare('SELECT id FROM gb_spots WHERE slug=?'); $q->execute([$slug]);
+                    $id = $q->fetchColumn();
+                    if ($id === false) {
+                        $db->prepare('INSERT INTO gb_spots (slug,name,width,height,price,period_days) VALUES (?,?,?,?,?,?)')
+                           ->execute([$slug, mb_substr((string)$s['name'], 0, 120), max(1, (int)$s['width']), max(1, (int)$s['height']),
+                                      max(0, (float)$s['price']), max(1, (int)$s['period_days'])]);
+                        $id = $db->lastInsertId();
+                        $report[] = 'Added placement "' . $s['name'] . '" (it did not exist on this site).';
+                    }
+                    $spotId[$slug] = (int)$id;
+                }
+
+                foreach ((array)($data['banners'] ?? []) as $b) {
+                    $src = (int)($b['source_id'] ?? 0);
+                    $sid = $spotId[(string)($b['spot_slug'] ?? '')] ?? 0;
+                    if (!$sid) { $report[] = "Skipped banner #$src: its placement is missing from the file."; continue; }
+                    $kind = $enum($b['kind'] ?? '', ['image', 'html'], 'image');
+                    $imgPath = null; $bytes = null;
+
+                    if ($kind === 'image') {
+                        $name = (string)($b['image']['name'] ?? '');
+                        $bytes = base64_decode((string)($b['image']['data'] ?? ''), true);
+                        if (!preg_match('/^[A-Za-z0-9_-]{1,64}\.(png|jpe?g|gif|webp)$/', $name) || $bytes === false || $bytes === '') {
+                            $report[] = "Skipped banner #$src: its image is missing from the export."; continue;
+                        }
+                        $info = @getimagesizefromstring($bytes);
+                        if (!$info || !isset($mimeExt[$info['mime']]) || strlen($bytes) > GB_MAX_UPLOAD_BYTES) {
+                            $report[] = "Skipped banner #$src: its image is not a valid PNG, JPEG, GIF or WebP under the size limit."; continue;
+                        }
+                        // Already imported? (same image file name, same click destination)
+                        $q = $db->prepare('SELECT id FROM gb_banners WHERE image_path=? AND COALESCE(target_url,\'\')=?');
+                        $q->execute(['uploads/' . $name, (string)($b['target_url'] ?? '')]);
+                        if ($q->fetchColumn() !== false) { $report[] = "Banner #$src was already imported; skipped."; continue; }
+                        if (is_file(GB_UPLOAD_DIR . '/' . $name) && sha1_file(GB_UPLOAD_DIR . '/' . $name) !== sha1($bytes))
+                            $name = bin2hex(random_bytes(10)) . '.' . $mimeExt[$info['mime']];   // never overwrite another image
+                        $imgPath = 'uploads/' . $name;
+                    } else {
+                        $q = $db->prepare("SELECT id FROM gb_banners WHERE kind='html' AND html=? AND created_at=?");
+                        $q->execute([(string)($b['html'] ?? ''), (string)($b['created_at'] ?? '')]);
+                        if ($q->fetchColumn() !== false) { $report[] = "Banner #$src was already imported; skipped."; continue; }
+                    }
+
+                    $db->beginTransaction();
+                    try {
+                        if ($imgPath && !is_file(GB_UPLOAD_DIR . '/' . basename($imgPath))
+                            && file_put_contents(GB_UPLOAD_DIR . '/' . basename($imgPath), $bytes) === false)
+                            throw new RuntimeException('could not save its image in the uploads folder (check its permissions)');
+                        $db->prepare('INSERT INTO gb_banners (spot_id,advertiser_name,advertiser_email,kind,image_path,html,target_url,
+                                      width,height,status,paid,starts_at,ends_at,impressions,clicks,created_at)
+                                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+                           ->execute([$sid,
+                               ($b['advertiser_name'] ?? null) !== null ? mb_substr((string)$b['advertiser_name'], 0, 120) : null,
+                               ($b['advertiser_email'] ?? null) !== null ? mb_substr((string)$b['advertiser_email'], 0, 190) : null,
+                               $kind, $imgPath, $kind === 'html' ? (string)($b['html'] ?? '') : null,
+                               mb_substr((string)($b['target_url'] ?? ''), 0, 500),
+                               max(1, (int)($b['width'] ?? 1)), max(1, (int)($b['height'] ?? 1)),
+                               $enum($b['status'] ?? '', ['pending', 'active', 'paused', 'rejected', 'expired'], 'pending'),
+                               (int)($b['paid'] ?? 0) === 1 ? 1 : 0,
+                               $dt($b['starts_at'] ?? null), $dt($b['ends_at'] ?? null),
+                               max(0, (int)($b['impressions'] ?? 0)), max(0, (int)($b['clicks'] ?? 0)),
+                               $dt($b['created_at'] ?? null) ?? gmdate('Y-m-d H:i:s')]);
+                        $new = (int)$db->lastInsertId();
+                        foreach ((array)($b['orders'] ?? []) as $o)
+                            $db->prepare('INSERT INTO gb_orders (banner_id,gateway,amount,currency,status,txn_ref,created_at) VALUES (?,?,?,?,?,?,?)')
+                               ->execute([$new, $enum($o['gateway'] ?? '', ['paypal', 'stripe', 'manual'], 'manual'), max(0, (float)($o['amount'] ?? 0)),
+                                          substr((string)($o['currency'] ?? GB_CURRENCY), 0, 3),
+                                          $enum($o['status'] ?? '', ['pending', 'paid', 'failed', 'refunded'], 'pending'),
+                                          mb_substr((string)($o['txn_ref'] ?? ''), 0, 190), $dt($o['created_at'] ?? null) ?? gmdate('Y-m-d H:i:s')]);
+                        foreach ((array)($b['stats'] ?? []) as $st)
+                            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($st['day'] ?? '')))
+                                $db->prepare('INSERT INTO gb_stats (banner_id,day,impressions,clicks) VALUES (?,?,?,?)')
+                                   ->execute([$new, $st['day'], max(0, (int)$st['impressions']), max(0, (int)$st['clicks'])]);
+                        $db->commit();
+                        $report[] = "Imported banner #$src as #$new (" . ($b['spot_slug'] ?? '') . ', ' . ($b['status'] ?? '')
+                                  . ((int)($b['paid'] ?? 0) === 1 ? ', paid' : ', unpaid') . ').';
+                    } catch (Throwable $ex) {
+                        $db->rollBack();
+                        $report[] = "Could not import banner #$src: " . $ex->getMessage() . '.';
+                    }
+                }
+                gb_expire_check();   // anything whose run already ended is marked expired
+            } catch (PDOException $ex) {
+                $errors[] = 'Database problem: ' . $ex->getMessage() . '. Run setup.php first if you haven\'t.';
+            }
+        }
+    }
+}
+
+echo gb_head('Import banners', 'login') . '<main class="login-card" style="max-width:560px">'
+   . '<a class="brand" href="advertise.php">' . gb_brand_mark() . '<span>' . gb_wordmark() . '<small>Import banners</small></span></a>'
+   . '<h1>Import banners</h1>';
+foreach ($errors as $er) echo '<div class="alert alert-error" role="alert">' . e($er) . '</div>';
+if ($report) {
+    echo '<div class="alert alert-success" role="status"><strong>Import finished.</strong><ul>';
+    foreach ($report as $r) echo '<li>' . e($r) . '</li>';
+    echo '</ul></div><p><a href="admin.php?a=banners">Open the banner list</a>. '
+       . 'When everything looks right, delete <code>import.php</code> from the server.</p>';
+} elseif (GB_ADMIN_PASSWORD !== 'CHANGE-ME-NOW' && strlen(GB_ADMIN_PASSWORD) >= 10) {
+    echo '<p class="muted">Adds banners from a <code>banners-export.json</code> file. Nothing already on this site is changed, '
+       . 'and importing the same file again adds nothing.</p>'
+       . '<form method="post" enctype="multipart/form-data">' . gb_csrf_field()
+       . '<label class="field"><span>Export file</span><input type="file" name="export" accept=".json,application/json" required></label>'
+       . '<label class="field"><span>Admin password</span><input type="password" name="password" required autocomplete="current-password"></label>'
+       . '<button class="btn btn-primary btn-block btn-lg" type="submit">Import banners</button></form>';
+}
+echo '</main></body></html>';
+IMPORT_FILE;
+
 $files['favicon.svg'] = <<<'FAVICON_FILE'
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><rect width="28" height="28" rx="6" fill="#0B6E4F"/><path d="M6 8.5h11.5L23 14l-5.5 5.5H6l3.2-5.5z" fill="#fff"/></svg>
 FAVICON_FILE;

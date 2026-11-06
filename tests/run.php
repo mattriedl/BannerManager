@@ -457,6 +457,69 @@ if ($mode === 'mysql') {
     check($counts() === [8, 0, 0] && substr_count($p, 'already existed') === 4, 'running setup twice changes nothing');
 }
 
+section('Move banners from a test site to the live site');
+// A Codespace-style test site with its own database and images.
+$src = "$build/codespace"; @mkdir("$src/uploads", 0777, true);
+$sp = new PDO("sqlite:$src/dev.sqlite"); $sp->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$sp->exec(file_get_contents(__DIR__ . '/schema.sqlite.sql'));
+$sp->exec("INSERT INTO gb_spots (slug,name,width,height,price,period_days) VALUES ('wide-tower','Wide Tower',240,400,10,30)");
+png(728, 90, "$src/uploads/aaaa1111bbbb2222cccc.png");
+png(300, 250, "$src/uploads/dddd3333eeee4444ffff.png");
+$end = gmdate('Y-m-d H:i:s', time() + 20 * 86400); $start = gmdate('Y-m-d H:i:s', time() - 10 * 86400);
+$sp->exec("INSERT INTO gb_banners (id,spot_id,kind,image_path,target_url,width,height,status,paid,starts_at,ends_at,impressions,clicks) VALUES
+  (13,2,'image','uploads/aaaa1111bbbb2222cccc.png','https://move-one.example',728,90,'active',1,'$start','$end',120,7),
+  (14,1,'image','uploads/dddd3333eeee4444ffff.png','https://move-two.example',300,250,'active',1,'$start','$end',80,2),
+  (15,9,'html',NULL,'',240,400,'active',1,'$start','$end',5,0),
+  (16,1,'image','uploads/dddd3333eeee4444ffff.png','https://rejected.example',300,250,'rejected',0,NULL,NULL,0,0)");
+$sp->exec("UPDATE gb_banners SET html='<a href=\"https://move-three.example\">Three</a>' WHERE id=15");
+$sp->exec("INSERT INTO gb_orders (banner_id,gateway,amount,status,txn_ref) VALUES (13,'manual',10,'paid','admin test')");
+$sp->exec("INSERT INTO gb_stats VALUES (13,'" . gmdate('Y-m-d', time() - 86400) . "',100,6), (13,'" . gmdate('Y-m-d') . "',20,1)");
+unset($sp);
+
+[$code, $out] = sh('php ' . escapeshellarg(__DIR__ . '/export-banners.php') . ' --db=' . escapeshellarg("$src/dev.sqlite")
+    . ' --uploads=' . escapeshellarg("$src/uploads") . ' --out=' . escapeshellarg("$src/banners-export.json"));
+check($code === 0 && str_contains($out, 'Exported 3 banner(s): #13, #14, #15'), 'export packs the 3 live-worthy banners (rejected one skipped)', $out);
+
+$import = function (string $file, string $pw) {
+    [, , $p] = http('GET', '/import.php', ['as' => 'import']);
+    return http('POST', '/import.php', ['as' => 'import', 'body' => ['csrf' => csrf_from($p), 'password' => $pw,
+        'export' => new CURLFile($file, 'application/json', 'banners-export.json')]]);
+};
+$before = $counts();
+[, , $p] = $import("$src/banners-export.json", 'wrong-password');
+check(str_contains($p, 'password is not correct') && $counts() === $before, 'import refuses a wrong password and changes nothing');
+file_put_contents("$src/not-export.json", '{"hello":"world"}');
+[, , $p] = $import("$src/not-export.json", GB_ADMIN_PASSWORD);
+check(str_contains($p, 'not a banner export') && $counts() === $before, 'import refuses a file that is not an export');
+
+[$s, , $p] = $import("$src/banners-export.json", GB_ADMIN_PASSWORD);
+check($s === 200 && str_contains($p, 'Import finished') && substr_count($p, 'Imported banner #') === 3, 'imports all 3 banners', strip_tags($p));
+check(str_contains($p, 'Added placement &quot;Wide Tower&quot;'), 'a placement missing on the live site is added');
+$after = $counts();
+check($after[1] === $before[1] + 3 && $after[0] === $before[0] + 1, 'exactly 3 banners and 1 placement were added', json_encode([$before, $after]));
+
+$moved = gb_db()->query("SELECT b.*, s.slug FROM gb_banners b JOIN gb_spots s ON s.id=b.spot_id WHERE target_url='https://move-one.example'")->fetch();
+check($moved && $moved['slug'] === 'leaderboard' && $moved['status'] === 'active' && (int)$moved['paid'] === 1
+      && $moved['ends_at'] === $end && (int)$moved['impressions'] === 120 && (int)$moved['clicks'] === 7,
+      'banner keeps its placement, link, status, paid flag, end date and counters', json_encode($moved));
+check(is_file("$build/" . $moved['image_path']) && sha1_file("$build/" . $moved['image_path']) === sha1_file("$src/uploads/aaaa1111bbbb2222cccc.png"),
+      'its image file is copied into uploads/');
+check((int)gb_db()->query("SELECT SUM(impressions) FROM gb_stats WHERE banner_id={$moved['id']}")->fetchColumn() === 120, 'its daily stats come along');
+check((float)gb_db()->query("SELECT amount FROM gb_orders WHERE banner_id={$moved['id']}")->fetchColumn() === 10.0, 'its order comes along');
+$html = gb_db()->query("SELECT * FROM gb_banners WHERE kind='html' AND html LIKE '%move-three.example%'")->fetch();
+check($html && $html['status'] === 'active', 'HTML banner is imported too');
+$hit = false;
+for ($i = 0; $i < 40 && !$hit; $i++) {
+    [, , $b] = http('GET', '/serve.php?spot=leaderboard&site=some-publisher.example');
+    $hit = str_contains((string)json_decode($b, true)['html'], 'go.php?id=' . $moved['id']);
+}
+check($hit, 'imported banners are served on the live site');
+
+[, , $p] = $import("$src/banners-export.json", GB_ADMIN_PASSWORD);
+check(substr_count($p, 'was already imported; skipped') === 3 && $counts() === $after, 'importing the same file again adds nothing');
+foreach (gb_db()->query("SELECT id FROM gb_banners WHERE target_url LIKE 'https://move-%' OR html LIKE '%move-three%'") as $r) gb_db()->exec("DELETE FROM gb_banners WHERE id={$r['id']}");
+gb_db()->exec("DELETE FROM gb_spots WHERE slug='wide-tower'");
+
 section('Branding');
 [, , $b] = http('GET', '/advertise.php', ['as' => 'brand']);
 check(str_contains($b, '<span class="wordmark"><b>Banner</b>Promote</span>'), 'BannerPromote wordmark in the header');
