@@ -97,6 +97,23 @@ GB_TEST_DB=mysql GB_TEST_MYSQL_USER=root GB_TEST_MYSQL_PASS=secret php tests/run
   `config.php` in dev/test builds and replaces it. Never upload
   `config.local.php` to a live server.
 
+## No self-ads
+
+A website never shows banners that link back to itself. When the embed code
+asks for an ad, it tells the server which website it is on; any banner whose
+click destination is that same website is skipped, and another banner is
+shown instead (or nothing, if none is left).
+
+- `www.` is ignored and subdomains count as the same website, so a banner for
+  `shop.examplewebsite.com` never appears on `blog.examplewebsite.com`.
+- Two-part endings such as `.co.uk` and shared hosts such as `github.io` or
+  `wordpress.com` are understood, so `alice.github.io` can still advertise on
+  `bob.github.io`.
+- HTML house banners are checked against every link inside them.
+- Older copies of the embed code still work: the server falls back to the
+  page address the browser reports.
+- Turn it off with `define('GB_BLOCK_SELF_ADS', false);` in `config.php`.
+
 ## Changing prices
 
 In the admin console go to **Placements**, click **Edit** on a placement,

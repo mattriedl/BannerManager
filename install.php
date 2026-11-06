@@ -138,6 +138,7 @@ define('GB_MAX_UPLOAD_BYTES', 5 * 1024 * 1024);  // 5 MB max image
 
 // --- Moderation ---
 define('GB_AUTO_APPROVE', false);  // false = banners need admin approval
+define('GB_BLOCK_SELF_ADS', true); // never show a banner on the website it links to
 define('GB_CURRENCY', 'USD');
 
 // --- PayPal ---
@@ -305,16 +306,91 @@ function gb_get_banner(int $id): ?array {
     return $st->fetch() ?: null;
 }
 
-/** Random rotation among eligible banners in a spot. */
-function gb_pick_banner(int $spot_id): ?array {
+/* ---------------- no self-ads: domain matching ---------------- */
+
+if (!defined('GB_BLOCK_SELF_ADS')) define('GB_BLOCK_SELF_ADS', true);
+
+/** Host name from a URL or bare host: lowercased, no port, no "www." prefix. '' if none. */
+function gb_host(?string $urlOrHost): string {
+    $s = trim((string)$urlOrHost);
+    if ($s === '' || strtolower($s) === 'null') return '';      // Origin: null (sandboxed pages)
+    if (!preg_match('~^[a-z][a-z0-9+.-]*://~i', $s)) $s = 'http://' . ltrim($s, '/');
+    $h = parse_url($s, PHP_URL_HOST);
+    if (!is_string($h) || $h === '') return '';
+    $h = strtolower(rtrim($h, '.'));
+    if (preg_match('/[^\x20-\x7e]/', $h) && function_exists('idn_to_ascii')) {   // café.com -> xn--caf-dma.com
+        $a = idn_to_ascii($h, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46);
+        if (is_string($a) && $a !== '') $h = $a;
+    }
+    return (string)preg_replace('/^www\d*\./', '', $h);
+}
+
+/**
+ * The part of a host name that identifies one website ("registrable domain"):
+ * blog.example.com -> example.com, shop.example.co.uk -> example.co.uk,
+ * alice.github.io -> alice.github.io (shared hosting: each user is a site).
+ */
+function gb_site_key(string $host): string {
+    if ($host === '' || !str_contains($host, '.') || filter_var(trim($host, '[]'), FILTER_VALIDATE_IP)) return $host;
+    static $suffixes = null;
+    $suffixes ??= array_flip([
+        // country second-level domains
+        'co.uk','org.uk','me.uk','ac.uk','gov.uk','ltd.uk','plc.uk','net.uk','sch.uk',
+        'com.au','net.au','org.au','edu.au','gov.au','id.au','co.nz','org.nz','net.nz','govt.nz',
+        'co.jp','ne.jp','or.jp','ac.jp','co.kr','or.kr','com.cn','net.cn','org.cn','com.hk','com.tw',
+        'com.sg','com.my','com.ph','com.vn','co.th','co.id','com.pk','co.in','net.in','org.in','gov.in',
+        'com.br','net.br','org.br','com.mx','org.mx','com.ar','com.co','com.pe','com.tr','co.za','org.za',
+        'co.il','com.eg','com.ng','co.ke','com.ua','com.pl','com.es','co.at','or.at',
+        // shared hosting platforms: every subdomain is a different owner's site
+        'github.io','gitlab.io','blogspot.com','wordpress.com','wixsite.com','squarespace.com','weebly.com',
+        'tumblr.com','substack.com','myshopify.com','herokuapp.com','netlify.app','vercel.app','pages.dev',
+        'workers.dev','web.app','firebaseapp.com','appspot.com','azurewebsites.net','cloudfront.net',
+        'onrender.com','fly.dev','glitch.me','repl.co','app.github.dev',
+    ]);
+    $l = explode('.', $host);
+    $n = count($l);
+    if ($n >= 4 && isset($suffixes[implode('.', array_slice($l, -3))])) return implode('.', array_slice($l, -4));
+    if ($n >= 3 && isset($suffixes[implode('.', array_slice($l, -2))])) return implode('.', array_slice($l, -3));
+    return implode('.', array_slice($l, -2));
+}
+
+/** True when two URLs/hosts belong to the same website. */
+function gb_same_site(string $a, string $b): bool {
+    $ha = gb_host($a); $hb = gb_host($b);
+    return $ha !== '' && $hb !== '' && gb_site_key($ha) === gb_site_key($hb);
+}
+
+/** Every click destination of a banner: its target URL, plus each link inside an HTML banner. */
+function gb_banner_destinations(array $b): array {
+    $urls = [(string)($b['target_url'] ?? '')];
+    if (($b['kind'] ?? '') === 'html' && preg_match_all('~\bhref\s*=\s*(["\']?)([^"\'\s>]+)\1~i', (string)$b['html'], $m))
+        $urls = array_merge($urls, $m[2]);
+    return array_values(array_filter($urls, fn($u) => gb_host($u) !== ''));
+}
+
+/** True when the banner links to the website it would be shown on. */
+function gb_is_self_ad(array $b, string $site): bool {
+    if (!GB_BLOCK_SELF_ADS || gb_host($site) === '') return false;
+    foreach (gb_banner_destinations($b) as $u) if (gb_same_site($u, $site)) return true;
+    return false;
+}
+
+/**
+ * Random rotation among eligible banners in a spot. When $site (the website
+ * showing the ad) is given, banners that link to that same website are skipped.
+ */
+function gb_pick_banner(int $spot_id, string $site = ''): ?array {
     $st = gb_db()->prepare(
         "SELECT * FROM gb_banners
          WHERE spot_id=? AND status='active' AND paid=1
            AND (starts_at IS NULL OR starts_at<=NOW())
            AND (ends_at   IS NULL OR ends_at>=NOW())
-         ORDER BY RAND() LIMIT 1");
+         ORDER BY RAND()");
     $st->execute([$spot_id]);
-    return $st->fetch() ?: null;
+    while ($b = $st->fetch()) {
+        if (!gb_is_self_ad($b, $site)) { $st->closeCursor(); return $b; }
+    }
+    return null;
 }
 
 function gb_banner_html(array $b): string {
@@ -442,16 +518,25 @@ require __DIR__ . '/config.php';
    AFTER the page renders (keeps PageSpeed happy) and the target
    URL stays hidden from crawlers (SEO-friendly, clean redirects).
    Call from any site:
-     GET serve.php?spot=leaderboard
+     GET serve.php?spot=leaderboard&site=examplewebsite.com
+   Banners whose click destination is the requesting website itself
+   (same domain, subdomains included) are skipped: no self-ads.
    ================================================================ */
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');   // allow remote embedding
 header('X-Robots-Tag: noindex, nofollow');
 
+// Which website is showing the ad? embed.js sends ?site=<page host>; older
+// copies of the embed code don't, so fall back to what the browser reports.
+$site = gb_host(is_string($_GET['site'] ?? null) ? $_GET['site'] : '');
+if ($site === '') $site = gb_host((string)($_SERVER['HTTP_ORIGIN'] ?? ''));
+if ($site === '') $site = gb_host((string)($_SERVER['HTTP_REFERER'] ?? ''));
+
 $spot = gb_find_spot_by_slug((string)($_GET['spot'] ?? ''));
 gb_expire_check();
-$banner = $spot ? gb_pick_banner((int)$spot['id']) : null;
+// Banners that link to $site itself are never shown there (no self-ads).
+$banner = $spot ? gb_pick_banner((int)$spot['id'], $site) : null;
 
 if ($banner) gb_track('impressions', (int)$banner['id']);
 
@@ -518,7 +603,8 @@ echo <<<JS
     Array.prototype.forEach.call(nodes, function (el) {
       if (el.getAttribute("data-gb-loaded")) return;
       el.setAttribute("data-gb-loaded", "1");
-      fetch(BASE + "/serve.php?spot=" + encodeURIComponent(el.getAttribute("data-gb-spot")))
+      fetch(BASE + "/serve.php?spot=" + encodeURIComponent(el.getAttribute("data-gb-spot")) +
+            "&site=" + encodeURIComponent(location.hostname))
         .then(function (r) { return r.json(); })
         .then(function (d) { if (d.html) el.innerHTML = d.html; })
         .catch(function () {});
@@ -1621,7 +1707,8 @@ if ($a === 'spots') {
            . '<label class="field"><span>Run length (days)</span><input type="number" name="period_days" value="30" min="1"></label></div>'
            . '<button class="btn btn-primary" type="submit">Add placement</button></form></section>'
            . '<section class="panel"><div class="panel-head"><div><h2>Embed code</h2>'
-           . '<p>Use one <code>div</code> per placement on the page; the script line only needs to appear once.</p></div></div>'
+           . '<p>Use one <code>div</code> per placement on the page; the script line only needs to appear once. '
+           . 'A website never sees banners that link back to its own domain.</p></div></div>'
            . gb_snippet($embedCode) . '</section></div>';
     gb_layout('Placements', 'spots', $body, 'The ad sizes you sell, with their prices and run lengths.');
     exit;

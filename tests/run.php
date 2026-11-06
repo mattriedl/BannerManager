@@ -279,6 +279,63 @@ check(json_decode($b, true)['html'] === null && banner($bid)['status'] === 'expi
 check($s === 404, 'clicks on expired banner -> 404');
 
 /* ---------- 9. admin banners + spots ---------- */
+section('No self-ads (domain matching)');
+foreach ([
+    ['https://www.examplewebsite.com/sale', 'examplewebsite.com', true,  'www. is ignored'],
+    ['https://shop.examplewebsite.com', 'blog.examplewebsite.com', true, 'subdomains count as the same website'],
+    ['HTTPS://ExampleWebsite.COM:8443/x?y', 'examplewebsite.com', true, 'case and port are ignored'],
+    ['https://examplewebsite.com', 'examplewebsite.net', false, 'different ending is a different website'],
+    ['https://notexamplewebsite.com', 'examplewebsite.com', false, 'look-alike name is a different website'],
+    ['https://shop.example.co.uk', 'example.co.uk', true, '.co.uk subdomain is the same website'],
+    ['https://alpha.co.uk', 'beta.co.uk', false, 'two .co.uk sites are different websites'],
+    ['https://alice.github.io/page', 'bob.github.io', false, 'two github.io users are different websites'],
+    ['https://alice.github.io/page', 'alice.github.io', true, 'same github.io user is the same website'],
+    ['https://a-8000.app.github.dev', 'b-8000.app.github.dev', false, 'two Codespaces are different websites'],
+    ['', 'examplewebsite.com', false, 'banner without a destination never matches'],
+] as [$url, $site, $want, $why]) check(gb_same_site($url, $site) === $want, "domain rule: $why");
+
+$db = gb_db();
+$db->exec("INSERT INTO gb_spots (slug,name,width,height,price,period_days) VALUES ('selftest','Self test',120,60,10,30)");
+$sid = (int)$db->lastInsertId();
+$mk = function (string $target, string $kind = 'image', string $html = '') use ($db, $sid): int {
+    $db->prepare("INSERT INTO gb_banners (spot_id,kind,image_path,html,target_url,width,height,status,paid)
+                  VALUES (?,?,?,?,?,120,60,'active',1)")
+       ->execute([$sid, $kind, $kind === 'image' ? 'uploads/x.png' : null, $html, $target]);
+    return (int)$db->lastInsertId();
+};
+$own   = $mk('https://www.examplewebsite.com/sale');
+$other = $mk('https://other-shop.com/deal');
+$served = function (string $query, array $headers = []): array {
+    $seen = [];
+    for ($i = 0; $i < 30; $i++) {
+        [, , $b] = http('GET', '/serve.php?spot=selftest' . $query, ['headers' => $headers]);
+        $h = (string)json_decode($b, true)['html'];
+        $seen[preg_match('~go\.php\?id=(\d+)~', $h, $m) ? (int)$m[1] : ($h === '' ? 'none' : 'html')] = true;
+    }
+    return array_keys($seen);
+};
+check($served('&site=examplewebsite.com') === [$other], "examplewebsite.com never gets its own banner (30 requests)");
+check($served('&site=www.examplewebsite.com') === [$other], 'www.examplewebsite.com never gets it either');
+check($served('&site=blog.examplewebsite.com') === [$other], 'blog.examplewebsite.com never gets it either');
+check($served('&site=other-shop.com') === [$own], 'the rule works the other way round too');
+$both = $served('&site=unrelated-news.com'); sort($both);
+check($both === [$own, $other], 'an unrelated website gets both banners in rotation');
+check($served('', ['Origin: https://examplewebsite.com']) === [$other], 'works for old embed code via the Origin header');
+check($served('', ['Referer: https://examplewebsite.com/articles/1']) === [$other], 'works via the Referer header');
+check($served('&site=examplewebsite.com', ['Origin: https://other-shop.com']) === [$other], 'the page address from embed.js takes priority');
+
+$db->exec("UPDATE gb_banners SET status='paused' WHERE id=$other");
+$before = (int)banner($own)['impressions'];
+check($served('&site=examplewebsite.com') === ['none'], 'slot stays empty when only the site\'s own banners exist');
+check((int)banner($own)['impressions'] === $before, 'no views are counted for skipped banners');
+$db->exec("UPDATE gb_banners SET status='paused' WHERE id=$own");
+$houseAd = $mk('', 'html', '<a href="https://shop.examplewebsite.com/promo"><b>Promo</b></a>');
+check($served('&site=examplewebsite.com') === ['none'], 'HTML banners are checked by the links inside them');
+check($served('&site=elsewhere.org') === ['html'], 'that HTML banner still shows on other websites');
+[, , $js] = http('GET', '/embed.js.php');
+check(str_contains($js, '"&site=" + encodeURIComponent(location.hostname)'), 'embed.js sends the page\'s website to the server');
+$db->exec("DELETE FROM gb_spots WHERE id=$sid");
+
 section('Unpaid banners (payment skipped)');
 gb_db()->prepare("INSERT INTO gb_banners (spot_id, advertiser_name, advertiser_email, kind, image_path, target_url, width, height, status, paid)
                   VALUES (2, 'Skip Payer', 'skip@example.test', 'image', 'uploads/none.png', 'https://skip.example.test', 728, 90, 'pending', 0)")->execute();
