@@ -520,10 +520,60 @@ check(substr_count($p, 'was already imported; skipped') === 3 && $counts() === $
 foreach (gb_db()->query("SELECT id FROM gb_banners WHERE target_url LIKE 'https://move-%' OR html LIKE '%move-three%'") as $r) gb_db()->exec("DELETE FROM gb_banners WHERE id={$r['id']}");
 gb_db()->exec("DELETE FROM gb_spots WHERE slug='wide-tower'");
 
+section('Search engine optimization');
+$pub = ['/' => 'index.html', '/advertise.php' => 'advertise.php', '/pricing.php' => 'pricing.php',
+        '/banner-ad-sizes.php' => 'banner-ad-sizes.php', '/how-to-buy-banner-ads.php' => 'how-to-buy-banner-ads.php', '/faq.php' => 'faq.php'];
+check(is_file("$build/index.html") && !is_file("$build/home.php"), 'home page rendered to a static index.html (template removed)');
+$titles = [];
+foreach ($pub as $path => $file) {
+    [$s, , $h] = http('GET', $path === '/' ? '/' : $path, ['as' => 'seo']);
+    preg_match('~<title>([^<]+)</title>~', $h, $t); preg_match('~name="description" content="([^"]+)"~', $h, $d);
+    preg_match('~rel="canonical" href="([^"]+)"~', $h, $c);
+    $ld = preg_match('~<script type="application/ld\+json">(.+?)</script>~s', $h, $j) ? json_decode($j[1], true) : null;
+    $ok = $s === 200 && str_contains($h, 'name="robots" content="index, follow')
+        && isset($t[1], $d[1], $c[1]) && mb_strlen(html_entity_decode($t[1])) <= 65 && mb_strlen(html_entity_decode($d[1])) <= 165
+        && substr_count($h, '<h1') === 1 && str_ends_with($c[1], $path) && is_array($ld['@graph'] ?? null)
+        && str_contains($h, 'property="og:image"');
+    check($ok, "$path: indexable, unique title/description, canonical, one H1, valid structured data",
+          json_encode(['status' => $s, 'title' => $t[1] ?? null, 'canon' => $c[1] ?? null, 'h1' => substr_count($h, '<h1')]));
+    $titles[] = $t[1] ?? '';
+}
+check(count(array_unique($titles)) === count($titles), 'every public page has a different title');
+foreach (['/admin.php', '/setup.php', '/import.php'] as $path) {
+    [, , $h] = http('GET', $path, ['as' => 'seo-private']);
+    check(str_contains($h, 'name="robots" content="noindex, nofollow"') && !str_contains($h, 'rel="canonical"'), "$path is hidden from search engines");
+}
+[, , $h] = http('GET', '/pricing.php');
+check(str_contains($h, '"@type":"Offer"') && str_contains($h, '"price":"10.00"'), 'pricing page lists live prices as structured data');
+[$s, $hd, $robots] = http('GET', '/robots.txt');
+check($s === 200 && str_contains($robots, "Disallow: /admin.php") && str_contains($robots, "Disallow: /preview.php")
+      && preg_match('~^Sitemap: https?://\S+/sitemap\.xml$~m', $robots) === 1, 'robots.txt blocks private pages and points to the sitemap');
+[$s, , $xml] = http('GET', '/sitemap.xml');
+$sx = @simplexml_load_string($xml);
+$locs = $sx ? array_map('strval', iterator_to_array($sx->url ? (function () use ($sx) { foreach ($sx->url as $u) yield (string)$u->loc; })() : [], false)) : [];
+check($s === 200 && $sx !== false && count($locs) === 6, 'sitemap.xml is valid XML with the 6 public pages', $xml);
+check(!array_filter($locs, fn($l) => preg_match('~admin|preview|setup|import|serve|go\.php~', $l)), 'sitemap contains no private pages');
+[$s, $hd] = http('GET', '/og-image.png');
+check($s === 200 && ($hd['content-type'] ?? '') === 'image/png' && getimagesize("$build/og-image.png")[0] === 1200, 'social sharing image (1200x630) is served');
+[$s, , $k] = http('GET', '/8896ea600333598d3649af506349872f.txt');
+check($s === 200 && trim($k) === '8896ea600333598d3649af506349872f', 'IndexNow key file is served for Bing');
+[, $hd] = http('GET', '/embed.js.php');
+check(($hd['x-robots-tag'] ?? '') === 'noindex', 'embed script is not indexed');
+
+$t2 = "$build/../seo-install"; sh('rm -rf ' . escapeshellarg($t2)); @mkdir($t2);
+file_put_contents("$t2/index.html", '<h1>Existing home page</h1>');
+[$code, $out] = sh('php ' . escapeshellarg("$root/install.php") . ' --dir=' . escapeshellarg($t2) . ' --lastmod=2026-01-02');
+check($code === 0 && file_get_contents("$t2/index.html") === '<h1>Existing home page</h1>' && str_contains($out, 'SKIP   index.html'),
+      'installer never replaces an existing index.html without --force');
+check(str_contains((string)@file_get_contents("$t2/sitemap.xml"), '<lastmod>2026-01-02</lastmod>'), '--lastmod sets the sitemap dates');
+[$code] = sh('php ' . escapeshellarg("$root/install.php") . ' --dir=' . escapeshellarg($t2) . ' --force --lastmod=yesterday');
+check($code !== 0, 'an invalid --lastmod is rejected');
+sh('rm -rf ' . escapeshellarg($t2));
+
 section('Branding');
 [, , $b] = http('GET', '/advertise.php', ['as' => 'brand']);
 check(str_contains($b, '<span class="wordmark"><b>Banner</b>Promote</span>'), 'BannerPromote wordmark in the header');
-check(str_contains($b, '<title>Advertise with BannerPromote | BannerPromote</title>'), 'page titles use BannerPromote');
+check(preg_match('~<title>Buy a Banner Ad Online: \d+ Sizes from \$\d+ \| BannerPromote</title>~', $b) === 1, 'page titles use BannerPromote');
 [$s, $h] = http('GET', '/favicon.svg');
 check($s === 200 && str_contains($h['content-type'] ?? '', 'svg'), 'favicon is served');
 [, , $cfg] = [0, 0, (string)file_get_contents("$build/config.php")];

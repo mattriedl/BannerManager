@@ -97,6 +97,29 @@ GB_TEST_DB=mysql GB_TEST_MYSQL_USER=root GB_TEST_MYSQL_PASS=secret php tests/run
   `config.php` in dev/test builds and replaces it. Never upload
   `config.local.php` to a live server.
 
+## Search engine optimization
+
+Public pages (all indexable, listed in `sitemap.xml`):
+
+| Page | Targets |
+|---|---|
+| `/` (static `index.html`, rendered from `home.php` at install) | buy banner ads, banner advertising |
+| `/advertise.php` | buy a banner ad online |
+| `/pricing.php` (live prices) | banner ad pricing, banner ad cost |
+| `/banner-ad-sizes.php` | banner ad sizes, 728x90, 300x250, 160x600, 320x50 |
+| `/how-to-buy-banner-ads.php` | how to buy banner ads |
+| `/faq.php` | banner advertising questions |
+
+Every page has a unique title and description, a canonical URL, Open Graph
+and Twitter tags, schema.org structured data (Organization, WebSite,
+BreadcrumbList, Service/Offer, Article, FAQPage) and links to the other
+pages. Every other page is `noindex` by default, and `robots.txt` blocks the
+private ones. Each verified deploy notifies Bing through IndexNow (key file
+`8896ea600333598d3649af506349872f.txt`). The home page's headline price is
+`GB_PRICE_PITCH` in `config.php`.
+
+Your previous "Coming Soon" page is kept in `docs/original-coming-soon-index.html`.
+
 ## No self-ads
 
 A website never shows banners that link back to itself. When the embed code
