@@ -79,28 +79,43 @@ jobs:
           H: ${{ secrets.SFTP_HOST }}
           U: ${{ secrets.SFTP_USER }}
           P: ${{ secrets.SFTP_PASSWORD }}
+          PORT: ${{ secrets.SFTP_PORT }}
+          DIR: ${{ secrets.SFTP_DIR }}
         run: |
+          # Remove stray spaces / line breaks that sneak in when pasting secrets.
+          clean() { printf '%s' "$1" | tr -d '\r\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'; }
+          h=$(clean "$H"); u=$(clean "$U"); port=$(clean "$PORT"); dir=$(clean "$DIR")
+          pw=$(printf '%s' "$P" | tr -d '\r\n')
           missing=""
-          [ -n "$H" ] || missing="$missing SFTP_HOST"
-          [ -n "$U" ] || missing="$missing SFTP_USER"
-          [ -n "$P" ] || missing="$missing SFTP_PASSWORD"
+          [ -n "$h" ]  || missing="$missing SFTP_HOST"
+          [ -n "$u" ]  || missing="$missing SFTP_USER"
+          [ -n "$pw" ] || missing="$missing SFTP_PASSWORD"
           if [ -n "$missing" ]; then
             echo "::error::Missing repository secrets:$missing. Add them under Settings > Secrets and variables > Actions."
             exit 1
           fi
-          echo "All connection secrets are set."
+          echo "::add-mask::$h"; echo "::add-mask::$u"; echo "::add-mask::$pw"
+          [ "$h" = "$H" ]  || echo "::notice::SFTP_HOST had extra spaces or line breaks around it; they were removed."
+          [ "$u" = "$U" ]  || echo "::notice::SFTP_USER had extra spaces or line breaks around it; they were removed."
+          [ "$pw" = "$P" ] || echo "::notice::SFTP_PASSWORD had a line break in it; it was removed."
+          case "$u" in *[!A-Za-z0-9._@-]*)
+            echo "::error::SFTP_USER contains a character a user name can't have (for example a quote or a space in the middle). Re-enter it: it should be just the user name."
+            exit 1;; esac
+          case "$h" in *[!A-Za-z0-9.:-]*)
+            echo "::error::SFTP_HOST should be only the server address (e.g. 173.249.54.18), without sftp:// or a port."
+            exit 1;; esac
+          case "${port:-22}" in *[!0-9]*) echo "::error::SFTP_PORT must be a number (usually 22)."; exit 1;; esac
+          {
+            echo "SFTP_H=$h"; echo "SFTP_U=$u"; echo "SFTP_P=${port:-22}"; echo "SFTP_D=${dir:-.}"
+            echo "LFTP_PASSWORD<<PW_END_9c41f"; printf '%s\n' "$pw"; echo "PW_END_9c41f"
+          } >> "$GITHUB_ENV"
+          echo "All connection secrets are set (user name: ${#u} characters, port ${port:-22})."
 
       - name: Check the server is ready (config.php present)
-        env:
-          SFTP_HOST: ${{ secrets.SFTP_HOST }}
-          SFTP_USER: ${{ secrets.SFTP_USER }}
-          LFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
-          SFTP_PORT: ${{ secrets.SFTP_PORT }}
-          SFTP_DIR: ${{ secrets.SFTP_DIR }}
         run: |
           out=$(lftp -e "set sftp:auto-confirm yes; set net:max-retries 2; set net:timeout 20;
-                         open -p ${SFTP_PORT:-22} -u \"$SFTP_USER\" --env-password sftp://$SFTP_HOST;
-                         cd \"${SFTP_DIR:-.}\"; pwd; cls -1; bye" 2>&1) || {
+                         open -p $SFTP_P -u $SFTP_U --env-password sftp://$SFTP_H;
+                         cd $SFTP_D; pwd; cls -1; bye" 2>&1) || {
             echo "::error::Could not log in or open the folder. Check SFTP_HOST, SFTP_USER, SFTP_PASSWORD (and SFTP_PORT/SFTP_DIR if set)."
             echo "$out"
             exit 1
@@ -116,18 +131,12 @@ jobs:
           fi
 
       - name: Upload files (nothing is uploaded on a dry run)
-        env:
-          SFTP_HOST: ${{ secrets.SFTP_HOST }}
-          SFTP_USER: ${{ secrets.SFTP_USER }}
-          LFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
-          SFTP_PORT: ${{ secrets.SFTP_PORT }}
-          SFTP_DIR: ${{ secrets.SFTP_DIR }}
         run: |
           dry=""; [ "$DRY_RUN" = "true" ] && dry="--dry-run"
           # --reverse uploads local -> server. No --delete: nothing on the server is removed.
           lftp -e "set sftp:auto-confirm yes; set net:max-retries 2; set net:timeout 30;
-                   open -p ${SFTP_PORT:-22} -u \"$SFTP_USER\" --env-password sftp://$SFTP_HOST;
-                   cd \"${SFTP_DIR:-.}\";
+                   open -p $SFTP_P -u $SFTP_U --env-password sftp://$SFTP_H;
+                   cd $SFTP_D;
                    mirror --reverse --verbose $dry --no-perms
                           --exclude-glob config.php --exclude-glob config.local.php --exclude-glob uploads/
                           build/site/ ./;
