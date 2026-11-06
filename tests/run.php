@@ -53,8 +53,6 @@ check(str_contains($sql, 'INSERT IGNORE INTO gb_spots'), 'schema import includes
 /* ---------- 2. database + server ---------- */
 section("Database ($mode) + web server");
 copy(__DIR__ . '/config.local.php', "$build/config.local.php");
-[$code, $out] = sh('GB_TEST_BASE_URL=' . escapeshellarg($base) . ' php ' . escapeshellarg("$root/tools/build-blog.php") . ' --site=' . escapeshellarg($build));
-check($code === 0 && str_contains($out, 'blog/index.html'), 'blog builds (every article passes the SEO checks)', $out);
 $envVars = [
     'GB_TEST_DB' => $mode,
     'GB_TEST_BASE_URL' => $base,
@@ -77,6 +75,8 @@ if ($mode === 'mysql') {
     $pdo->exec(file_get_contents(__DIR__ . '/schema.sqlite.sql'));
 }
 unset($pdo);
+[$code, $out] = sh('GB_TEST_BASE_URL=' . escapeshellarg($base) . ' php ' . escapeshellarg("$root/tools/build-blog.php") . ' --site=' . escapeshellarg($build));
+check($code === 0 && str_contains($out, 'blog/index.html'), 'blog builds (every article passes the SEO checks)', $out);
 
 require "$build/config.php";   // loads config.local.php + lib.php -> gb_db()
 check((int)gb_db()->query('SELECT COUNT(*) FROM gb_spots')->fetchColumn() === 8, '8 preset spots seeded');
