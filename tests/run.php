@@ -278,7 +278,7 @@ check((int)banner($bid)['impressions'] === 3 && (int)banner($bid)['clicks'] === 
 check(str_contains($st, '33.33%'), 'stats page shows 33.33% CTR');
 [$s, $h, $b] = http('GET', '/stats.php');
 $pub = json_decode($b, true);
-$total = (int)gb_db()->query('SELECT SUM(impressions) FROM gb_banners')->fetchColumn();
+$total = max((int)gb_db()->query('SELECT SUM(impressions) FROM gb_stats')->fetchColumn(), (int)gb_db()->query('SELECT SUM(impressions) FROM gb_banners')->fetchColumn());
 check($s === 200 && ($pub['served'] ?? null) === $total && $total >= 3, 'stats.php reports the network total of banners served');
 check(array_keys($pub) === ['served', 'today', 'updated'] && !str_contains($b, 'advertiser'), 'stats.php exposes totals only, nothing per advertiser');
 [, , $home] = http('GET', '/');

@@ -800,7 +800,10 @@ header('X-Robots-Tag: noindex, nofollow');
 
 try {
     $db = gb_db();
-    $served = (int)$db->query('SELECT COALESCE(SUM(impressions),0) FROM gb_banners')->fetchColumn();
+    // All-time views from the daily stats (what Stats in the admin console adds up), or the
+    // per-banner running totals if those are higher (e.g. banners imported without their history).
+    $served = max((int)$db->query('SELECT COALESCE(SUM(impressions),0) FROM gb_stats')->fetchColumn(),
+                  (int)$db->query('SELECT COALESCE(SUM(impressions),0) FROM gb_banners')->fetchColumn());
     $today  = (int)$db->query('SELECT COALESCE(SUM(impressions),0) FROM gb_stats WHERE day=CURDATE()')->fetchColumn();
     echo json_encode(['served' => $served, 'today' => $today, 'updated' => gmdate('c')]);
 } catch (Throwable $ex) {
