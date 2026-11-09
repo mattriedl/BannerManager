@@ -1667,7 +1667,7 @@ echo gb_head('Home', 'home', [
       <div class="served" id="served" hidden aria-live="polite">
         <span class="served-dot" aria-hidden="true"></span>
         <div><span class="served-num" id="served-num">0</span>
-          <span class="served-label">banner ads served across our network and counting<span id="served-today"></span></span></div>
+          <span class="served-label">banner ads served across our network and counting</span></div>
       </div>
     </div>
     <div class="lineup" aria-label="The eight banner sizes you can buy, drawn to scale">
@@ -1752,8 +1752,7 @@ echo gb_head('Home', 'home', [
 /* Live "banner ads served" counter: reads the network total from stats.php,
    counts up to it, then refreshes every 30 seconds. Stays hidden if unavailable. */
 (function () {
-  var box = document.getElementById('served'), num = document.getElementById('served-num'),
-      today = document.getElementById('served-today'), shown = 0;
+  var box = document.getElementById('served'), num = document.getElementById('served-num'), shown = 0;
   if (!box || !window.fetch) return;
   var fmt = function (n) { return Math.round(n).toLocaleString('en-US'); };
   var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1772,7 +1771,6 @@ echo gb_head('Home', 'home', [
     fetch('stats.php', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
       if (!d || typeof d.served !== 'number' || d.served < 1) return;
       box.hidden = false;
-      today.innerHTML = d.today > 0 ? ' &middot; <strong>' + fmt(d.today) + ' today</strong>' : '';
       animate(d.served);
     }).catch(function () {});
   }
