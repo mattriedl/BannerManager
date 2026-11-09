@@ -192,7 +192,7 @@ foreach ($live as $p) {
     $updated = ($p['updated'] ?? '') !== '' ? $p['updated'] : $p['date'];
     $faq = extract_faq($p['body']);
     $words = count(plain_words($p['body']));
-    $full = $p['seo_title'] . (mb_strlen($p['seo_title'] . ' | ' . GB_BRAND_NAME) <= 65 ? ' | ' . GB_BRAND_NAME : '');
+    $full = $p['seo_title'] . (mb_strlen($p['seo_title'] . ' | ' . GB_BRAND_NAME) <= 60 ? ' | ' . GB_BRAND_NAME : '');
     $meta = [
         'path' => $path, 'og_type' => 'article', 'title_full' => $full, 'description' => $p['description'],
         'extra_head' => $feedLink
