@@ -782,6 +782,33 @@ echo json_encode([
 ]);
 SERVE_FILE;
 
+$files['stats.php'] = <<<'STATS_FILE'
+<?php
+declare(strict_types=1);
+require __DIR__ . '/config.php';
+
+/* ================================================================
+   Public, read-only network total for the home page counter:
+   how many banner ads have been served in total (every impression
+   the ad server has counted, the same numbers as Stats in the admin
+   console). Returns only totals, never anything about one advertiser.
+   ================================================================ */
+
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: public, max-age=15');
+header('X-Robots-Tag: noindex, nofollow');
+
+try {
+    $db = gb_db();
+    $served = (int)$db->query('SELECT COALESCE(SUM(impressions),0) FROM gb_banners')->fetchColumn();
+    $today  = (int)$db->query('SELECT COALESCE(SUM(impressions),0) FROM gb_stats WHERE day=CURDATE()')->fetchColumn();
+    echo json_encode(['served' => $served, 'today' => $today, 'updated' => gmdate('c')]);
+} catch (Throwable $ex) {
+    http_response_code(503);
+    echo json_encode(['error' => 'unavailable']);
+}
+STATS_FILE;
+
 $files['go.php'] = <<<'GO_FILE'
 <?php
 declare(strict_types=1);
@@ -1226,6 +1253,17 @@ body.login { min-height: 100vh; display: grid; place-items: center; padding: 24p
 .btn-ghost { color: #fff; border-color: rgba(255,255,255,.35); background: transparent; }
 .btn-ghost:hover { color: #fff; border-color: #fff; }
 .hero-note { color: #8F9AB3; font-size: 14px; margin-top: 18px; }
+.served { display: inline-flex; align-items: center; gap: 14px; margin-top: 26px; padding: 14px 20px 14px 16px;
+  border: 1px solid rgba(79,199,154,.35); border-radius: var(--r-md); background: rgba(79,199,154,.08); }
+.served[hidden] { display: none; }
+.served-dot { width: 10px; height: 10px; border-radius: 50%; background: #4FC79A; flex: none;
+  box-shadow: 0 0 0 0 rgba(79,199,154,.6); animation: served-pulse 2s infinite; }
+@keyframes served-pulse { 70% { box-shadow: 0 0 0 10px rgba(79,199,154,0); } 100% { box-shadow: 0 0 0 0 rgba(79,199,154,0); } }
+@media (prefers-reduced-motion: reduce) { .served-dot { animation: none; } }
+.served-num { display: block; font: 800 30px/1.05 Archivo, Arial, sans-serif; font-stretch: 105%; color: #fff;
+  font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.served-label { display: block; font-size: 14px; color: #C9D2E3; margin-top: 3px; }
+.served-label strong { color: #4FC79A; font-weight: 600; }
 .lineup { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1); border-radius: var(--r-md); padding: 22px;
   background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);
   background-size: 14px 14px; }
@@ -1623,6 +1661,11 @@ echo gb_head('Home', 'home', [
         <a class="btn btn-ghost btn-lg" href="banner-ad-sizes.php">See banner sizes</a>
       </div>
       <p class="hero-note">Every ad is reviewed by a person, usually within one business day.</p>
+      <div class="served" id="served" hidden aria-live="polite">
+        <span class="served-dot" aria-hidden="true"></span>
+        <div><span class="served-num" id="served-num">0</span>
+          <span class="served-label">banner ads served across our network and counting<span id="served-today"></span></span></div>
+      </div>
     </div>
     <div class="lineup" aria-label="The eight banner sizes you can buy, drawn to scale">
       <div class="lineup-grid">
@@ -1702,6 +1745,37 @@ echo gb_head('Home', 'home', [
 
   <?= gb_cta('Start your banner campaign today', 'Choose a size, upload your banner and go live after a quick review. ' . ucfirst(GB_PRICE_PITCH) . '.') ?>
 
+<script>
+/* Live "banner ads served" counter: reads the network total from stats.php,
+   counts up to it, then refreshes every 30 seconds. Stays hidden if unavailable. */
+(function () {
+  var box = document.getElementById('served'), num = document.getElementById('served-num'),
+      today = document.getElementById('served-today'), shown = 0;
+  if (!box || !window.fetch) return;
+  var fmt = function (n) { return Math.round(n).toLocaleString('en-US'); };
+  var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function animate(to) {
+    var from = shown, start = null, ms = from ? 1200 : 1800;
+    shown = to;
+    if (still || to <= from) { num.textContent = fmt(to); return; }
+    (function step(t) {
+      if (!start) start = t;
+      var p = Math.min(1, (t - start) / ms), e = 1 - Math.pow(1 - p, 3);
+      num.textContent = fmt(from + (to - from) * e);
+      if (p < 1) requestAnimationFrame(step);
+    })(performance.now());
+  }
+  function load() {
+    fetch('stats.php', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      if (!d || typeof d.served !== 'number' || d.served < 1) return;
+      box.hidden = false;
+      today.innerHTML = d.today > 0 ? ' &middot; <strong>' + fmt(d.today) + ' today</strong>' : '';
+      animate(d.served);
+    }).catch(function () {});
+  }
+  load(); setInterval(function () { if (!document.hidden) load(); }, 30000);
+})();
+</script>
 <?= gb_public_close() ?>
 PAGE_HOME;
 

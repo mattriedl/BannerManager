@@ -276,6 +276,13 @@ check($s === 302 && ($h['location'] ?? '') === 'https://advertiser.example.test/
 check((int)banner($bid)['impressions'] === 3 && (int)banner($bid)['clicks'] === 1, 'counters: 3 impressions, 1 click');
 [, , $st] = http('GET', '/admin.php?a=stats', ['as' => 'admin']);
 check(str_contains($st, '33.33%'), 'stats page shows 33.33% CTR');
+[$s, $h, $b] = http('GET', '/stats.php');
+$pub = json_decode($b, true);
+$total = (int)gb_db()->query('SELECT SUM(impressions) FROM gb_banners')->fetchColumn();
+check($s === 200 && ($pub['served'] ?? null) === $total && $total >= 3, 'stats.php reports the network total of banners served');
+check(array_keys($pub) === ['served', 'today', 'updated'] && !str_contains($b, 'advertiser'), 'stats.php exposes totals only, nothing per advertiser');
+[, , $home] = http('GET', '/');
+check(str_contains($home, 'id="served"') && str_contains($home, "fetch('stats.php'"), 'home page has the live banners-served counter');
 [$s] = http('GET', '/go.php?id=999999');
 check($s === 404, 'go.php unknown id -> 404');
 
