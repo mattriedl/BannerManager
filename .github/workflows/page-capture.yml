@@ -10,6 +10,9 @@ on:
       sites:
         description: "Space-separated domains to capture"
         default: "bannerpromote.com wagerassistant.com"
+      paths:
+        description: "Space-separated paths to capture on each site"
+        default: "/"
 
 jobs:
   capture:
@@ -19,15 +22,17 @@ jobs:
         env:
           H: ${{ secrets.SFTP_HOST }}
           SITES: ${{ inputs.sites }}
+          PATHS: ${{ inputs.paths || '/' }}
         shell: bash
         run: |
           ip=$(printf '%s' "$H" | tr -d '\r\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'); echo "::add-mask::$ip"
           case "$SITES" in *[!a-zA-Z0-9.\ -]*) echo "::error::Bad site list"; exit 1;; esac
+          case "$PATHS" in *[!a-zA-Z0-9./\ _-]*) echo "::error::Bad path list"; exit 1;; esac
           mkdir -p cap
           EDGE='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0'
           IPHONE='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'
           for s in $SITES; do
-            for path in / ; do
+            for path in $PATHS; do
               n=$(printf '%s' "$s$path" | tr '/.' '__')
               curl -sk --compressed --max-time 25 -A "$EDGE" -H 'Accept: text/html' -H 'Accept-Language: en-US' -D "cap/$n.cf-edge.headers" -o "cap/$n.cf-edge.html" "https://$s$path" || true
               curl -sk --compressed --max-time 25 -A "$EDGE" -e "https://www.google.com/" -D "cap/$n.cf-google.headers" -o "cap/$n.cf-google.html" "https://$s$path" || true
