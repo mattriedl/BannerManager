@@ -283,6 +283,16 @@ check($s === 200 && ($pub['served'] ?? null) === $total && $total >= 3, 'stats.p
 check(array_keys($pub) === ['served', 'today', 'updated'] && !str_contains($b, 'advertiser'), 'stats.php exposes totals only, nothing per advertiser');
 [, , $home] = http('GET', '/');
 check(str_contains($home, 'id="served"') && str_contains($home, "fetch('stats.php'"), 'home page has the live banners-served counter');
+[$s, , $b] = http('GET', '/pricing.php', ['headers' => ['Host: 173.249.54.18']]);
+check($s === 403 && !str_contains($b, GB_BRAND_NAME), 'site refuses requests made to the bare server IP');
+[$s] = http('GET', '/pricing.php', ['headers' => ['Host: [2606:4700::1]:443']]);
+check($s === 403, 'site refuses requests made to a bare IPv6 address');
+[$s] = http('GET', '/pricing.php', ['headers' => ['Host: www.bannerpromote.com']]);
+check($s === 200, 'site still answers on its domain name');
+[$s, , $b] = http('GET', '/contact.php');
+check($s === 200 && str_contains($b, 'mailto:help@bannerpromote.com') && str_contains($b, 'ContactPage'), 'contact page lists help@bannerpromote.com');
+check(str_contains($home, 'contact.php">Contact us</a>'), 'footer links to the contact page');
+check(str_contains((string)@file_get_contents("$build/.htaccess"), 'RewriteRule ^ - [F,L]'), '.htaccess refuses bare-IP requests');
 [$s] = http('GET', '/go.php?id=999999');
 check($s === 404, 'go.php unknown id -> 404');
 

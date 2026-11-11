@@ -272,12 +272,36 @@ function gb_public_pages(): array {
         '/how-to-buy-banner-ads.php' => 'How it works',
         '/faq.php'                   => 'FAQ',
         '/blog/'                     => 'Blog',
+        '/contact.php'               => 'Contact us',
     ];
 }
 
 /* ---------------- analytics (Google Tag Manager + consent) ---------------- */
 
 if (!defined('GB_GTM_ID')) define('GB_GTM_ID', 'GTM-T9SK6QS3');
+
+/** Public help address shown on the Contact page, in the footer and in the legal pages. */
+if (!defined('GB_CONTACT_EMAIL')) define('GB_CONTACT_EMAIL', 'help@bannerpromote.com');
+
+/* ---------------- only answer on the real domain ----------------
+   Requests that reach the server by its bare IP address (for example https://173.249.54.18/)
+   get a plain 403 instead of the site, so the domain isn't tied to the server IP's reputation.
+   Local development (127.0.0.1, ::1, localhost) is unaffected. .htaccess does the same for
+   static files on Apache/LiteSpeed. */
+function gb_block_bare_ip(): void {
+    if (PHP_SAPI === 'cli') return;
+    $raw  = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? '')));
+    $host = preg_match('~^\[(.*)\](:\d+)?$~', $raw, $m) ? $m[1] : preg_replace('~:\d+$~', '', $raw);
+    $isIp = $host === '' || filter_var($host, FILTER_VALIDATE_IP) !== false;
+    $local = $host === 'localhost' || str_starts_with($host, '127.') || $host === '::1';
+    if ($isIp && !$local) {
+        http_response_code(403);
+        header('Content-Type: text/plain; charset=utf-8');
+        header('X-Robots-Tag: noindex, nofollow');
+        exit('Forbidden');
+    }
+}
+gb_block_bare_ip();
 
 /**
  * Consent Mode defaults + Tag Manager loader, placed first in <head>.
@@ -362,7 +386,8 @@ function gb_head(string $title, string $bodyClass = '', array $meta = []): strin
             . '<meta name="twitter:image" content="' . e($img) . '">';
         $graph = array_merge([
             ['@type' => 'Organization', '@id' => gb_url('/#organization'), 'name' => GB_BRAND_NAME,
-             'url' => gb_url('/'), 'logo' => gb_url('/favicon.svg'), 'email' => GB_ADMIN_EMAIL],
+             'url' => gb_url('/'), 'logo' => gb_url('/favicon.svg'), 'email' => GB_CONTACT_EMAIL,
+             'contactPoint' => ['@type' => 'ContactPoint', 'contactType' => 'customer support', 'email' => GB_CONTACT_EMAIL, 'url' => gb_url('/contact.php')]],
             ['@type' => 'WebSite', '@id' => gb_url('/#website'), 'name' => GB_BRAND_NAME, 'url' => gb_url('/'),
              'publisher' => ['@id' => gb_url('/#organization')], 'inLanguage' => 'en-US'],
         ], $meta['jsonld'] ?? []);
@@ -440,7 +465,6 @@ function gb_public_close(): string {
          . '<div class="foot-brand"><a class="brand" href="' . e(gb_path('/')) . '">' . gb_brand_mark() . gb_wordmark() . '</a>'
          . '<p>Self-serve banner advertising: pick an ad size, upload your banner and run it for 30 days.</p></div>'
          . '<nav aria-label="Site"><ul class="foot-links">' . $links
-         . '<li><a href="mailto:' . e(GB_ADMIN_EMAIL) . '">Contact us</a></li>'
          . '<li><a href="' . e(gb_path('/privacy.php')) . '">Privacy Policy</a></li><li><a href="' . e(gb_path('/terms.php')) . '">Terms of Service</a></li>'
          . (gb_consent_banner() !== '' ? '<li><a href="#" data-cookie-settings>Cookie settings</a></li>' : '')
          . '</ul></nav>'
@@ -1256,6 +1280,12 @@ body.login { min-height: 100vh; display: grid; place-items: center; padding: 24p
 .btn-ghost { color: #fff; border-color: rgba(255,255,255,.35); background: transparent; }
 .btn-ghost:hover { color: #fff; border-color: #fff; }
 .hero-note { color: #8F9AB3; font-size: 14px; margin-top: 18px; }
+.contact-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-md); padding: 28px 32px; margin-bottom: 24px; }
+.contact-label { margin: 0 0 4px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted, #5B6478); }
+.contact-email { font: 800 26px/1.2 Archivo, Arial, sans-serif; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+.contact-email:hover { color: var(--brand); text-decoration: underline; }
+.contact-card .muted { margin: 6px 0 0; }
 .served { display: inline-flex; align-items: center; gap: 14px; margin-top: 26px; padding: 14px 20px 14px 16px;
   border: 1px solid rgba(79,199,154,.35); border-radius: var(--r-md); background: rgba(79,199,154,.08); }
 .served[hidden] { display: none; }
@@ -2222,7 +2252,7 @@ echo gb_site_open('Banner advertising FAQ', 'Answers to the questions advertiser
     </div>
   <?php endforeach; ?>
   <h2>Still have a question?</h2>
-  <p>E-mail our ad team at <a href="mailto:<?= e(GB_ADMIN_EMAIL) ?>"><?= e(GB_ADMIN_EMAIL) ?></a>. You can also read
+  <p>E-mail us at <a href="mailto:<?= e(GB_CONTACT_EMAIL) ?>"><?= e(GB_CONTACT_EMAIL) ?></a> or use our <a href="contact.php">contact page</a>. You can also read
     <a href="how-to-buy-banner-ads.php">how to buy banner ads</a>, the <a href="banner-ad-sizes.php">banner size guide</a> or
     <a href="pricing.php">pricing</a>.</p>
 </article>
@@ -2316,7 +2346,7 @@ echo gb_site_open('Terms of Service', 'The rules for advertising with ' . GB_BRA
   <p>We may update these terms. The version you agreed to applies to your order; new orders use the version in force when they are placed.</p>
 
   <h2>11. Contact</h2>
-  <p>Questions about these terms: <a href="mailto:<?= e(GB_ADMIN_EMAIL) ?>"><?= e(GB_ADMIN_EMAIL) ?></a>.
+  <p>Questions about these terms: <a href="mailto:<?= e(GB_CONTACT_EMAIL) ?>"><?= e(GB_CONTACT_EMAIL) ?></a>.
     See also our <a href="privacy.php">Privacy Policy</a>.</p>
 </article>
 <?= gb_public_close() ?>
@@ -2336,7 +2366,7 @@ echo gb_site_open('Privacy Policy', 'What information ' . GB_BRAND_NAME . ' coll
                    . 'analytics cookies with consent, and your privacy rights.',
     'jsonld'      => [gb_breadcrumb('Privacy Policy', '/privacy.php')],
 ], 'Privacy Policy');
-$mail = '<a href="mailto:' . e(GB_ADMIN_EMAIL) . '">' . e(GB_ADMIN_EMAIL) . '</a>';
+$mail = '<a href="mailto:' . e(GB_CONTACT_EMAIL) . '">' . e(GB_CONTACT_EMAIL) . '</a>';
 ?>
 <article class="article prose legal">
   <p class="muted">Effective <?= e(date('F j, Y', strtotime(GB_PRIVACY_DATE))) ?>.</p>
@@ -2402,6 +2432,80 @@ $mail = '<a href="mailto:' . e(GB_ADMIN_EMAIL) . '">' . e(GB_ADMIN_EMAIL) . '</a
 </article>
 <?= gb_public_close() ?>
 PAGE_PRIVACY;
+
+$files['contact.php'] = <<<'PAGE_CONTACT'
+<?php
+declare(strict_types=1);
+require __DIR__ . '/config.php';
+
+/* Contact page. The address is GB_CONTACT_EMAIL (lib.php). */
+
+$mail = e(GB_CONTACT_EMAIL);
+echo gb_site_open('Contact us', 'Questions about advertising, an order or a banner you saw? E-mail the ' . GB_BRAND_NAME
+    . ' team and a real person will get back to you.', [
+    'path'        => '/contact.php',
+    'title_full'  => 'Contact Us | ' . GB_BRAND_NAME,
+    'description' => 'Contact the ' . GB_BRAND_NAME . ' team at ' . GB_CONTACT_EMAIL . ' with questions about banner ads, orders, '
+                   . 'payments or to report an ad that breaks our rules.',
+    'jsonld'      => [gb_breadcrumb('Contact us', '/contact.php'),
+        ['@type' => 'ContactPage', 'name' => 'Contact ' . GB_BRAND_NAME, 'url' => gb_url('/contact.php'),
+         'about' => ['@id' => gb_url('/#organization')]]],
+], 'Contact us');
+?>
+<div class="contact-card">
+  <div>
+    <p class="contact-label">E-mail us</p>
+    <a class="contact-email" href="mailto:<?= $mail ?>"><?= $mail ?></a>
+    <p class="muted">We read every message and reply by e-mail.</p>
+  </div>
+  <a class="btn btn-primary btn-lg" href="mailto:<?= $mail ?>?subject=<?= rawurlencode(GB_BRAND_NAME . ' question') ?>">Send us an e-mail</a>
+</div>
+
+<article class="article prose">
+  <h2>How we can help</h2>
+  <ul>
+    <li><strong>Advertising questions.</strong> Which banner size to choose, how placements work, or whether your ad is a good fit.
+      The <a href="faq.php">FAQ</a> and <a href="how-to-buy-banner-ads.php">how to buy banner ads</a> answer the most common ones.</li>
+    <li><strong>Your order.</strong> Questions about payment, approval or your banner's run. Include your banner number
+      (the <code>id</code> on your preview page) so we can find it quickly.</li>
+    <li><strong>Changing your banner.</strong> If we asked you for a new banner or link, reply to that e-mail or write to us here.</li>
+    <li><strong>Publishers.</strong> Questions about showing <?= e(GB_BRAND_NAME) ?> banners on your website.</li>
+  </ul>
+
+  <h2 id="report">Report an ad</h2>
+  <p>Every banner is reviewed by a person before it runs, and our <a href="terms.php">Terms of Service</a> ban fraud, adult content,
+    anything illegal and links that redirect somewhere else. If you see a <?= e(GB_BRAND_NAME) ?> banner that breaks these rules or leads
+    somewhere unsafe, e-mail <a href="mailto:<?= $mail ?>?subject=<?= rawurlencode('Ad report') ?>"><?= $mail ?></a> with the page you
+    saw it on and where it took you. We investigate every report and remove ads that break the rules.</p>
+
+  <h2>Privacy and legal</h2>
+  <p>Read how we handle your information in our <a href="privacy.php">Privacy Policy</a>, and the rules every advertiser agrees to in our
+    <a href="terms.php">Terms of Service</a>. Questions about either go to the same address.</p>
+</article>
+<?= gb_public_close() ?>
+PAGE_CONTACT;
+
+/* Apache/LiteSpeed rules. Not written over an existing .htaccess unless --force. */
+$files['.htaccess'] = <<<'HTACCESS_FILE'
+# BannerPromote: answer only on the site's domain.
+# Requests that reach this server by its bare IP address (e.g. https://173.249.54.18/)
+# or with no host name get "403 Forbidden" instead of the site, so security scanners
+# that probe the IP don't link the domain to the server's IP reputation.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTP_HOST} ^$ [OR]
+    RewriteCond %{HTTP_HOST} ^\d{1,3}(\.\d{1,3}){3}(:\d+)?$ [OR]
+    RewriteCond %{HTTP_HOST} ^\[
+    RewriteRule ^ - [F,L]
+</IfModule>
+
+# Never serve these, even if they end up in the site folder.
+<FilesMatch "^(schema\.sql|config\.local\.php|\.git.*)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+</FilesMatch>
+HTACCESS_FILE;
 
 $files['sitemap.xml.php'] = <<<'PAGE_SITEMAP'
 <?php

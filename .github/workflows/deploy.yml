@@ -169,7 +169,7 @@ jobs:
         if: env.DRY_RUN != 'true'
         run: |
           bad=""
-          for page in "" advertise.php pricing.php banner-ad-sizes.php how-to-buy-banner-ads.php faq.php privacy.php terms.php blog/ blog/feed.xml \
+          for page in "" advertise.php pricing.php banner-ad-sizes.php how-to-buy-banner-ads.php faq.php privacy.php terms.php contact.php blog/ blog/feed.xml \
                       admin.php embed.js.php style.css favicon.svg robots.txt sitemap.xml og-image.png; do
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE_URL/$page" || echo 000)
             echo "$SITE_URL/$page -> HTTP $code"
@@ -186,6 +186,18 @@ jobs:
           j=$(curl -s --max-time 20 "$SITE_URL/serve.php?spot=leaderboard&site=deploy-check.invalid")
           echo "serve.php -> $j"
           echo "$j" | grep -q '"width":728' || bad="$bad serve.php(database not reachable?)"
+          # The server's bare IP address must not show the site (only the domain, through Cloudflare).
+          ip=$(printf '%s' "$SFTP_H" | tr -d '\r\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+          if printf '%s' "$ip" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+            for u in "https://$ip/" "https://$ip/pricing.php" "http://$ip/"; do
+              r=$(curl -sk -o "$RUNNER_TEMP/ip.html" -w '%{http_code}' --max-time 20 "$u" || echo 000)
+              if grep -q 'BannerPromote' "$RUNNER_TEMP/ip.html" 2>/dev/null; then
+                echo "::warning::The bare server IP still shows the site ($u -> HTTP $r). The web server may ignore .htaccess (e.g. nginx)."
+              else
+                echo "Bare server IP blocked: ${u/$ip/<server-ip>} -> HTTP $r"
+              fi
+            done
+          fi
           if [ -n "$bad" ]; then
             echo "::error::Uploaded, but these checks failed:$bad. Common causes: database details in config.php, setup.php not run yet, PHP below 8.1."
             exit 1
