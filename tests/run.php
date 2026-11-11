@@ -293,6 +293,9 @@ check($s === 200, 'site still answers on its domain name');
 check($s === 200 && str_contains($b, 'mailto:help@bannerpromote.com') && str_contains($b, 'ContactPage'), 'contact page lists help@bannerpromote.com');
 check(str_contains($home, 'contact.php">Contact us</a>'), 'footer links to the contact page');
 check(str_contains((string)@file_get_contents("$build/.htaccess"), 'RewriteRule ^ - [F,L]'), '.htaccess refuses bare-IP requests');
+[, $h] = http('GET', '/pricing.php');
+check(str_contains($h['cache-control'] ?? '', 'no-transform'), 'pages ask proxies not to inject scripts (Cache-Control: no-transform)');
+check(str_contains((string)@file_get_contents("$build/.htaccess"), 'Header merge Cache-Control "no-transform"'), '.htaccess sends no-transform for static pages');
 [$s] = http('GET', '/go.php?id=999999');
 check($s === 404, 'go.php unknown id -> 404');
 

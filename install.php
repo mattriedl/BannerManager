@@ -358,6 +358,9 @@ function gb_consent_banner(): string {
  * Pages are hidden from search engines unless they opt in with 'index' => true.
  */
 function gb_head(string $title, string $bodyClass = '', array $meta = []): string {
+    // Ask proxies such as Cloudflare not to modify pages. Cloudflare otherwise injects its own
+    // obfuscated bot-detection script, which antivirus programs (e.g. Avast) can flag as suspicious.
+    if (!headers_sent()) header('Cache-Control: no-transform');
     $index = !empty($meta['index']);
     $full  = $meta['title_full'] ?? ($title . ' | ' . GB_BRAND_NAME);
     $h = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
@@ -2440,9 +2443,6 @@ require __DIR__ . '/config.php';
 
 /* Contact page. The address is GB_CONTACT_EMAIL (lib.php). */
 
-// Test: ask proxies (Cloudflare) not to modify this page, so no scripts are injected into it.
-header('Cache-Control: no-transform');
-
 $mail = e(GB_CONTACT_EMAIL);
 echo gb_site_open('Contact us', 'Questions about advertising, an order or a banner you saw? E-mail the ' . GB_BRAND_NAME
     . ' team and a real person will get back to you.', [
@@ -2500,6 +2500,14 @@ $files['.htaccess'] = <<<'HTACCESS_FILE'
     RewriteCond %{HTTP_HOST} ^\d{1,3}(\.\d{1,3}){3}(:\d+)?$ [OR]
     RewriteCond %{HTTP_HOST} ^\[
     RewriteRule ^ - [F,L]
+</IfModule>
+
+# Ask proxies such as Cloudflare not to modify the static pages (home page, blog). Cloudflare
+# otherwise injects its own obfuscated bot-detection script, which antivirus programs can flag.
+<IfModule mod_headers.c>
+    <FilesMatch "\.html?$">
+        Header merge Cache-Control "no-transform"
+    </FilesMatch>
 </IfModule>
 
 # Never serve these, even if they end up in the site folder.
