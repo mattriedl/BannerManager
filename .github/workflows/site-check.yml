@@ -1,0 +1,42 @@
+# Read-only check of what the live site returns: status codes, redirects and
+# whether Cloudflare is challenging requests, for the domain and the bare server IP.
+# Changes nothing. Actions > Site check > Run workflow.
+
+name: Site check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the domain and the bare server IP
+        env:
+          H: ${{ secrets.SFTP_HOST }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://bannerpromote.com' }}
+        shell: bash
+        run: |
+          ip=$(printf '%s' "$H" | tr -d '\r\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'); echo "::add-mask::$ip"
+          show() {  # URL [extra curl args]
+            local u=$1; shift
+            curl -sk -o "$RUNNER_TEMP/b" -D "$RUNNER_TEMP/h" --max-time 20 "$@" "$u" >/dev/null || true
+            local code=$(head -1 "$RUNNER_TEMP/h" | awk '{print $2}')
+            local loc=$(grep -i '^location:' "$RUNNER_TEMP/h" | head -1 | cut -d' ' -f2- | tr -d '\r')
+            local srv=$(grep -iE '^(server|cf-mitigated):' "$RUNNER_TEMP/h" | tr -d '\r' | tr '\n' ' ')
+            local what=page; grep -q 'Just a moment' "$RUNNER_TEMP/b" && what="CLOUDFLARE CHALLENGE"
+            grep -q 'BannerPromote' "$RUNNER_TEMP/b" && what="$what (BannerPromote content)"
+            [ "$(cat "$RUNNER_TEMP/b")" = "Forbidden" ] && what="our 403 block"
+            echo "${u/$ip/<server-ip>} -> ${code:-none} ${loc:+-> $loc} | $srv| $what"
+          }
+          echo "== Domain (through Cloudflare)"
+          for p in / /pricing.php /contact.php /serve.php?spot=leaderboard /stats.php /style.css; do show "$SITE_URL$p"; done
+          echo "== Same, with a normal browser user agent"
+          for p in / /serve.php?spot=leaderboard; do show "$SITE_URL$p" -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'; done
+          echo "== Bare server IP (should not show the site)"
+          for u in "https://$ip/" "https://$ip/index.html" "https://$ip/pricing.php" "http://$ip/"; do show "$u"; done
+          echo "== Server IP with the domain name (direct to origin, bypassing Cloudflare)"
+          show "https://bannerpromote.com/" --resolve "bannerpromote.com:443:$ip"
+          show "https://bannerpromote.com/pricing.php" --resolve "bannerpromote.com:443:$ip"
+          echo "== Certificate the bare IP presents"
+          echo | openssl s_client -connect "$ip:443" 2>/dev/null | openssl x509 -noout -subject -ext subjectAltName 2>/dev/null | sed "s/$ip/<server-ip>/g" || echo "(none)"
