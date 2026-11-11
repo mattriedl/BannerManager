@@ -2440,6 +2440,9 @@ require __DIR__ . '/config.php';
 
 /* Contact page. The address is GB_CONTACT_EMAIL (lib.php). */
 
+// Test: ask proxies (Cloudflare) not to modify this page, so no scripts are injected into it.
+header('Cache-Control: no-transform');
+
 $mail = e(GB_CONTACT_EMAIL);
 echo gb_site_open('Contact us', 'Questions about advertising, an order or a banner you saw? E-mail the ' . GB_BRAND_NAME
     . ' team and a real person will get back to you.', [
