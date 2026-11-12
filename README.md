@@ -179,9 +179,9 @@ Set your company name with `GB_BRAND_NAME` in `config.php` (default:
 Add repository secrets `SFTP_HOST`, `SFTP_USER`, `SFTP_PASSWORD` (optional
 `SFTP_PORT`, `SFTP_DIR`), upload your filled-in `config.php` once, then run
 **Actions → Deploy → Run workflow** (dry run first). It never uploads
-`config.php`, never touches `uploads/` and never deletes server files. Set
-the repository variable `AUTO_DEPLOY=true` to deploy after every push that
-passes the tests.
+`config.php`, never touches `uploads/` and never deletes server files. Every
+push to `main` that passes the tests is deployed automatically; set the
+repository variable `AUTO_DEPLOY=false` to turn that off.
 
 ## Deploy on SFTP-only hosting (no command line)
 

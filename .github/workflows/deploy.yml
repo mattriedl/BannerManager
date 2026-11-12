@@ -15,10 +15,10 @@
 #   - delete anything on the server
 #   - upload setup.php / import.php, unless you tick "Include setup.php and import.php"
 #
-# Runs when you start it (Actions > Deploy > Run workflow). To also deploy
-# automatically after every push that passes the tests, add a repository
-# variable AUTO_DEPLOY = true (Settings > Secrets and variables > Actions >
-# Variables).
+# Runs automatically after every push to main that passes the tests, and
+# whenever you start it (Actions > Deploy > Run workflow). To turn off the
+# automatic deploys, add a repository variable AUTO_DEPLOY = false
+# (Settings > Secrets and variables > Actions > Variables).
 
 name: Deploy
 
@@ -44,10 +44,12 @@ concurrency:
 
 jobs:
   deploy:
-    # Manual runs always; automatic runs only if enabled and the tests passed.
+    # Manual runs always; automatic runs only for pushes to main whose tests passed
+    # (unless turned off with AUTO_DEPLOY = false).
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (vars.AUTO_DEPLOY == 'true' && github.event.workflow_run.conclusion == 'success')
+      (vars.AUTO_DEPLOY != 'false' && github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     env:
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
